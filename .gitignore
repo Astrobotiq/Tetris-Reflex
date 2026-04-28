@@ -1,0 +1,20 @@
+# --- JetBrains IDE (CLion) ---
+.idea/
+
+# --- CMake ve CLion Derleme Klasörleri ---
+cmake-build-*/
+build/
+out/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+
+# --- Derlenmiş Dosyalar (Binaries) ---
+*.exe
+*.dll
+*.lib
+*.so
+*.dylib
+*.obj
+*.o

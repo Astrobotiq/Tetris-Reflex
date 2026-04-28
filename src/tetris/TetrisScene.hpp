@@ -123,7 +123,7 @@ namespace tetris {
 			// Durum overlay'leri
 			if (m_gameState.paused)  renderOverlay(window, "DURDURULDU", "P tusu: devam");
 			if (m_showGameOver)      renderOverlay(window, "OYUN BITTI",
-				"Skor: " + std::to_string(m_gameState.score) +
+				"Skor: " + std::to_string(m_gameState.m_score) +
 				"   R: Yeniden");
 		}
 
@@ -259,7 +259,7 @@ namespace tetris {
 			// Skor bilgileri
 			float infoY = panelY + 260.f;
 			drawText(window, "SKOR", { panelX + 10.f, infoY }, 13, sf::Color(140, 140, 200));
-			drawText(window, std::to_string(m_gameState.score),
+			drawText(window, std::to_string(m_gameState.m_score),
 				{ panelX + 10.f, infoY + 18.f }, 18, sf::Color(255, 255, 100));
 			drawText(window, "SEVIYE", { panelX + 10.f, infoY + 50.f }, 13, sf::Color(140, 140, 200));
 			drawText(window, std::to_string(m_gameState.level),

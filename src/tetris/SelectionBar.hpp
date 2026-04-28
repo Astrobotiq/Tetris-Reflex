@@ -120,7 +120,7 @@ namespace tetris {
 
             // Skor/level bilgisi (font varsa)
             if (m_font) {
-                drawText(window, "SKOR: " + std::to_string(gs.score),
+                drawText(window, "SKOR: " + std::to_string(gs.m_score),
                          {m_origin.x + m_width - 160.f, m_origin.y + 10.f}, 16);
                 drawText(window, "SEVIYE: " + std::to_string(gs.level),
                          {m_origin.x + m_width - 160.f, m_origin.y + 34.f}, 16);

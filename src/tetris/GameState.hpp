@@ -83,24 +83,24 @@ namespace tetris {
         // targetCol: bırakılan board sütunu
         // Döndürür: true = başarıyla yerleştirildi
         // ── Seçim parçasını tahtaya sürükle-bırak ───────────────────────────────
-        bool placeSelectionPiece(int selectionIndex, int targetCol) {
+        // YENİ: Parametrelere 'int targetRow' eklendi
+        bool placeSelectionPiece(int selectionIndex, int targetCol, int targetRow) {
             if (selectionIndex < 0 || selectionIndex >= SELECTION_SIZE) return false;
 
-            Piece &piece = selectionPieces[selectionIndex];
-            auto [valid, placed] = board.findDropPosition(piece, targetCol);
+            Piece piece = selectionPieces[selectionIndex];
+
+            auto [valid, placed] = board.getDirectPlacement(piece, targetCol, targetRow);
+
             if (!valid) return false;
 
             board.place(placed);
             processLineClears();
 
-            // Selection Bar'ı yenile
             for (int i = 0; i < selectionPieces.size(); ++i) {
                 selectionPieces[i] = spawnPiece();
             }
 
-            // ── YENİ EKLENEN SATIR: Yukarıdan düşen parçayı anında aşağı çak ──
             //hardDropFallingPiece();
-
             return true;
         }
 

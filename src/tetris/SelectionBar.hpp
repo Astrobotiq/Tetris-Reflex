@@ -88,12 +88,13 @@ namespace tetris {
             if (!onBoard) return {false, m_drag.selectionIndex, -1};
 
             int col = static_cast<int>((mousePos.x - boardOriginX) / CELL_SIZE);
+            int row = static_cast<int>((mousePos.y - boardOriginY) / CELL_SIZE);
 
             // Parça döndürme durumunu sync et
             int idx = m_drag.selectionIndex;
             gs.selectionPieces[idx].rotation = m_drag.piece.rotation;
 
-            bool ok = gs.placeSelectionPiece(idx, col);
+            bool ok = gs.placeSelectionPiece(idx, col, row);
             return {ok, idx, col};
         }
 

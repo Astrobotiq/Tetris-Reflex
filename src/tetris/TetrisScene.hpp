@@ -50,6 +50,7 @@ namespace tetris {
 				addLineClearParticles(rows);
 				};
 			m_gameState.onGameOver = [this]() { m_showGameOver = true; };
+			m_buildVersion = std::string("Build: ") + __DATE__ + " " + __TIME__;
 		}
 
 		void onEnter() override {
@@ -282,6 +283,8 @@ namespace tetris {
 			if (m_gameState.debugDisableGravity) {
 				drawText(window, "[YERCEKIMI KAPALI]", { panelX + 10.f, ctrlY + 105.f }, 12, sf::Color(255, 100, 100));
 			}
+
+			drawText(window, m_buildVersion, { panelX + 10.f, ctrlY + 125.f }, 10, sf::Color(100, 100, 120));
 		}
 
 		void drawMiniPiece(sf::RenderWindow& window, const Piece& piece,
@@ -378,6 +381,8 @@ namespace tetris {
 
 		// Parçacıklar
 		std::vector<SimpleParticle> m_particles;
+
+		std::string m_buildVersion;
 	};
 
 } // namespace tetris

@@ -156,6 +156,43 @@ namespace tetris {
             return {true, piece};
         }
 
+        std::pair<bool, Piece> getDirectPlacement(Piece piece, int mouseCol, int mouseRow) const {
+            // 1. Parçanın 4x4 matrisindeki gerçek sınırlarını bul (Hem X hem Y için)
+            int minC = 4, maxC = -1;
+            int minR = 4, maxR = -1;
+
+            for (auto [r, c] : piece.localCells()) {
+                minC = std::min(minC, c);
+                maxC = std::max(maxC, c);
+                minR = std::min(minR, r);
+                maxR = std::max(maxR, r);
+            }
+
+            // Eğer parça boşsa (hata durumu), false dön
+            if (maxR < 0) return {false, piece};
+
+            // 2. Pivot Kaydırması (Center Offset)
+            // Farenin ucu tam olarak parçanın ortasına denk gelsin diye merkezi buluyoruz.
+            int centerX = (minC + maxC) / 2;
+            int centerY = (minR + maxR) / 2;
+
+            piece.col = mouseCol - centerX;
+            piece.row = mouseRow - centerY; // Y ekseni için pivot kaydırması!
+
+            // 3. Tahta Sınırlandırması (Clamp)
+            // Oyuncu taşı tahtanın dışına sürüklerse, taş tahtanın kenarına yapışsın (çökmesin)
+            piece.col = std::clamp(piece.col, -minC, BOARD_COLS - 1 - maxC);
+            piece.row = std::clamp(piece.row, -minR, BOARD_ROWS - 1 - maxR); // Y ekseni sınırlandırması!
+
+            // 4. Çarpışma Testi
+            // Artık yukarıdan aşağı inmek (ghost) yok. Tam o noktada yer var mı?
+            if (canPlace(piece)) {
+                return {true, piece}; // Yer var, kopyalanmış ve güncellenmiş piece'i dön
+            }
+
+            return {false, piece}; // Yer yok (altında başka blok var vs.)
+        }
+
     private:
         void removeRow(int row) {
             // Satırı sil: üstteki tüm satırları bir aşağı kaydır

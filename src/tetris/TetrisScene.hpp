@@ -1,388 +1,600 @@
 #pragma once
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TetrisScene.hpp  —  Engine SceneManager'a bağlı Tetris sahnesi
-//
-// Pencere düzeni (600 × 740):
-//   ┌─────────────┬────────────┐
-//   │  BOARD      │  Sağ panel │  ← 0..575 y
-//   │  320×576    │  skor/next │
-//   ├─────────────┴────────────┤
-//   │  SEÇİM ÇUBUĞU  120px    │  ← 576..696 y
-//   └──────────────────────────┘
-// ─────────────────────────────────────────────────────────────────────────────
-
 #include "../SceneManager.hpp"
 #include "GameState.hpp"
 #include "BoardRenderer.hpp"
 #include "SelectionBar.hpp"
 #include "ParticleEffect.hpp"
 #include <SFML/Graphics.hpp>
+#include <algorithm>
+#include <ctime>
 #include <memory>
 #include <string>
 
 namespace tetris {
 
-	inline constexpr unsigned WIN_W = 600;
-	inline constexpr unsigned WIN_H = 740;
+inline constexpr unsigned WIN_W = 700;   // Genişletildi: sol panel için yer
+inline constexpr unsigned WIN_H = 740;
 
-	// Board tahtanın ekrandaki konumu
-	inline constexpr float BOARD_X = 30.f;
-	inline constexpr float BOARD_Y = 20.f;
-	inline constexpr float BOARD_PIXEL_W = BOARD_COLS * CELL_SIZE;  // 320
-	inline constexpr float BOARD_PIXEL_H = BOARD_ROWS * CELL_SIZE;  // 576
+inline constexpr float LEFT_PANEL_W  = 140.f;  // Sol panel genişliği
+inline constexpr float BOARD_X       = LEFT_PANEL_W + 10.f;
+inline constexpr float BOARD_Y       = 20.f;
+inline constexpr float BOARD_PIXEL_W = BOARD_COLS * CELL_SIZE;
+inline constexpr float BOARD_PIXEL_H = BOARD_ROWS * CELL_SIZE;
+inline constexpr float BAR_Y         = BOARD_Y + BOARD_PIXEL_H + 4.f;
 
-	inline constexpr float BAR_Y = BOARD_Y + BOARD_PIXEL_H + 4.f;
+class TetrisScene : public engine::Scene {
+public:
+    explicit TetrisScene(sf::RenderWindow& win)
+        : window(win)
+        , gameState(static_cast<std::uint32_t>(std::time(nullptr)))
+        , boardRenderer({ BOARD_X, BOARD_Y })
+        , selectionBar({ 0.f, BAR_Y }, float(WIN_W))
+    {
+        gameState.onLinesCleared = [this](int, std::vector<int> rows) {
+            flashRows = rows; flashTimer = 0.f; flashDuration = 0.35f;
+            addLineClearParticles(rows);
+        };
+        gameState.onGameOver = [this]() { showGameOver = true; };
 
-	class TetrisScene : public engine::Scene {
-	public:
-		explicit TetrisScene(sf::RenderWindow& window)
-			: m_window(window)
-			, m_gameState(static_cast<std::uint32_t>(std::time(nullptr)))
-			, m_boardRenderer({ BOARD_X, BOARD_Y })
-			, m_selectionBar({ 0.f, BAR_Y }, float(WIN_W))
-		{
-			// Callbacks
-			m_gameState.onLinesCleared = [this](int /*n*/, std::vector<int> rows) {
-				m_flashRows = rows;
-				m_flashTimer = 0.f;
-				m_flashDuration = 0.35f;
-				addLineClearParticles(rows);
-				};
-			m_gameState.onGameOver = [this]() { m_showGameOver = true; };
-			m_buildVersion = std::string("Build: ") + __DATE__ + " " + __TIME__;
-		}
+        // Slot machine sonucu — combo varsa efekt göster
+        gameState.onSlotResult = [this](SlotResult result) {
+            lastSlotResult  = result;
+            slotResultTimer = 2.5f; // 2.5 saniye göster
+        };
+    }
 
-		void onEnter() override {
-			// Font yükle (yoksa çalışmaya devam et)
-			if (m_font.openFromFile("assets/font.ttf") ||
-				m_font.openFromFile("assets/fonts/arial.ttf"))
-			{
-				m_selectionBar.setFont(m_font);
-				m_fontLoaded = true;
-			}
-			m_particles.reserve(512);
-		}
+    void onEnter() override {
+        bool loaded = false;
+        for (auto& path : {
+            std::string("assets/font.ttf"),
+            std::string("C:/Windows/Fonts/arial.ttf"),
+            std::string("C:/Windows/Fonts/calibri.ttf"),
+            std::string("C:/Windows/Fonts/segoeui.ttf")
+        }) {
+            if (loaded) break;
+            if (font.openFromFile(path)) {
+                loaded = true;
+            }
+        }
+        if (loaded) {
+            selectionBar.setFont(font);
+            fontLoaded = true;
+        }
+        particles.reserve(512);
 
-		void update(float dt, engine::InputManager& input) override {
-			if (m_gameState.gameOver) {
-				// R tuşu: yeniden başlat
-				if (input.isPressed(sf::Keyboard::Key::R)) restartGame();
-				return;
-			}
+        // Güç seçim modu başlangıçta kapalı
+        powerSelectMode  = false;
+        selectedPowerIdx = -1;
+    }
 
-			if (input.isPressed(sf::Keyboard::Key::P)) {
-				m_gameState.paused = !m_gameState.paused;
-			}
+    void update(float dt, engine::InputManager& input) override {
+        if (gameState.gameOver) {
+            if (input.isPressed(sf::Keyboard::Key::R)) restartGame();
+            return;
+        }
+        if (input.isPressed(sf::Keyboard::Key::P))
+            gameState.paused = !gameState.paused;
 
-			if (input.isPressed(sf::Keyboard::Key::G)) {
-				m_gameState.debugDisableGravity = !m_gameState.debugDisableGravity;
-			}
+        gameState.update(dt);
+        selectionBar.update(dt, gameState);
 
-			m_gameState.update(dt);
-			updateFlash(dt);
-			updateParticles(dt);
-			updateDragPreview();
-		}
+        updateFlash(dt);
+        updateParticles(dt);
+        updateDragPreview();
 
-		// SFML eventleri dışarıdan ilet (Application::run içinde pollEvent sonrası)
-		void handleEvent(const sf::Event& event) {
-			sf::Vector2f mouse = m_window.mapPixelToCoords(sf::Mouse::getPosition(m_window));
-			if (const auto* e = event.getIf<sf::Event::MouseButtonPressed>()) {
-				if (e->button == sf::Mouse::Button::Left)  m_selectionBar.onMousePress(mouse, m_gameState);
-				if (e->button == sf::Mouse::Button::Right) m_selectionBar.onRightClick(mouse, m_gameState);
-			}
-			if (event.is<sf::Event::MouseMoved>()) m_selectionBar.onMouseMove(mouse);
-			if (const auto* e = event.getIf<sf::Event::MouseButtonReleased>()) {
-				if (e->button == sf::Mouse::Button::Left) {
-					auto result = m_selectionBar.onMouseRelease(mouse, BOARD_X, BOARD_Y, BOARD_Y + BOARD_PIXEL_H, m_gameState);
-					if (result.success) addPlaceParticles(mouse);
-					m_boardRenderer.setDragPreview(std::nullopt, true);
-				}
-			}
-		}
+        // Slot result ekranda ne kadar kalsın
+        if (slotResultTimer > 0.f) slotResultTimer -= dt;
+    }
 
-		void render(sf::RenderWindow& window, float /*alpha*/) override {
-			// Arkaplan
-			window.clear(sf::Color(10, 10, 20));
+    void handleEvent(const sf::Event& event) {
+        if (gameState.gameOver) return;
+        sf::Vector2f mouse = sf::Vector2f(sf::Mouse::getPosition(window));
 
-			// Tahta
-			m_boardRenderer.setFlashRows(m_flashRows,
-				m_flashDuration > 0 ? m_flashTimer / m_flashDuration : 0.f);
-			m_boardRenderer.render(window, m_gameState.board,
-				m_gameState.fallingPiece, true);
+        if (const auto* e = event.getIf<sf::Event::MouseButtonPressed>()) {
+            if (e->button == sf::Mouse::Button::Left) {
+                // O_Big modu: board üzerinde tıklanan kolona düşen parçayı taşı
+                if (oPlacementMode) {
+                    sf::FloatRect br = boardRenderer.boardRect();
+                    if (br.contains(mouse)) {
+                        int col = boardRenderer.screenXToCol(mouse.x);
+                        gameState.applyMoveFallingToCol(col);
+                    }
+                    gameState.freezeFalling(false);
+                    oPlacementMode = false;
+                    return;
+                }
+                // Güç seçim modunda: sol panel üzerindeki güçlere tıklama
+                if (powerSelectMode) {
+                    handlePowerClick(mouse);
+                    return;
+                }
+                selectionBar.onMousePress(mouse, gameState);
+            }
+            if (e->button == sf::Mouse::Button::Right)
+                selectionBar.onRightClick(mouse, gameState);
+        }
+        if (event.is<sf::Event::MouseMoved>())
+            selectionBar.onMouseMove(mouse);
 
-			// Parçacıklar
-			renderParticles(window);
+        if (const auto* e = event.getIf<sf::Event::MouseButtonReleased>()) {
+            if (e->button == sf::Mouse::Button::Left) {
+                auto result = selectionBar.onMouseRelease(
+                    mouse, BOARD_X, BOARD_Y, BOARD_Y + BOARD_PIXEL_H, gameState);
+                if (result.success) addPlaceParticles(mouse);
+                boardRenderer.setDragPreview(std::nullopt, true);
+            }
+        }
+    }
 
-			// Seçim çubuğu
-			m_selectionBar.render(window, m_gameState);
+    void render(sf::RenderWindow& renderWindow, float) override {
+        renderWindow.clear(sf::Color(10, 10, 20));
 
-			// Sağ panel
-			renderSidePanel(window);
+        boardRenderer.setFlashRows(flashRows,
+            flashDuration > 0 ? flashTimer / flashDuration : 0.f);
+        boardRenderer.render(renderWindow, gameState.board,
+                               gameState.fallingPiece, true);
 
-			// Durum overlay'leri
-			if (m_gameState.paused)  renderOverlay(window, "DURDURULDU", "P tusu: devam");
-			if (m_showGameOver)      renderOverlay(window, "OYUN BITTI",
-				"Skor: " + std::to_string(m_gameState.m_score) +
-				"   R: Yeniden");
-		}
+        // Jeton taşıyan düşen parça üzerinde parlama
+        if (gameState.fallingHasToken)
+            drawTokenGlow(renderWindow);
 
-	private:
-		// ── Sürükleme önizlemesi güncelle ────────────────────────────────────────
-		void updateDragPreview() {
-			if (!m_selectionBar.isDragging()) {
-				m_boardRenderer.setDragPreview(std::nullopt, true);
-				return;
-			}
+        renderParticles(renderWindow);
+        selectionBar.render(renderWindow, gameState);
+        renderLeftPanel(renderWindow);
+        renderSidePanel(renderWindow);
 
-			const auto& drag = m_selectionBar.dragState();
-			sf::Vector2f mouse = drag.mousePos;
+        // O_Big modu: board üzerinde ipucu göster
+        if (oPlacementMode)
+            renderOPlacementHint(renderWindow);
 
-			sf::FloatRect br = m_boardRenderer.boardRect();
-			float padding = CELL_SIZE * 2.f;
-			br.position.x -= padding;
-			br.size.x += padding * 2.f;
+        // Slot machine sonuç bildirimi
+        if (slotResultTimer > 0.f)
+            renderSlotResult(renderWindow);
 
-			if (!br.contains(mouse)) {
-				m_boardRenderer.setDragPreview(std::nullopt, true);
-				return;
-			}
+        renderWindow.setView(renderWindow.getDefaultView());
+        renderHUD(renderWindow);
 
-			int col = m_boardRenderer.screenXToCol(mouse.x);
-			auto [valid, placed] = m_gameState.board.findDropPosition(drag.piece, col);
-			m_boardRenderer.setDragPreview(placed, valid);
-		}
+        if (gameState.paused)  renderOverlay(renderWindow, "DURDURULDU", "P: devam");
+        if (showGameOver)      renderOverlay(renderWindow, "OYUN BITTI",
+            "Skor: " + std::to_string(gameState.score) + "   R: Yeniden");
+    }
 
-		// ── Flash animasyonu ──────────────────────────────────────────────────────
-		void updateFlash(float dt) {
-			if (m_flashDuration <= 0.f) return;
-			m_flashTimer += dt;
-			if (m_flashTimer >= m_flashDuration) {
-				m_flashTimer = 0.f;
-				m_flashDuration = 0.f;
-				m_flashRows.clear();
-				m_boardRenderer.setFlashRows({}, 0.f);
-			}
-		}
+private:
+    // ── Sol panel: güçler listesi ─────────────────────────────────────────────
+    void renderLeftPanel(sf::RenderWindow& renderWindow) {
+        // Arka plan
+        sf::RectangleShape panel(sf::Vector2f{LEFT_PANEL_W, BOARD_PIXEL_H});
+        panel.setPosition(sf::Vector2f{0.f, BOARD_Y});
+        panel.setFillColor(sf::Color(18, 18, 32));
+        panel.setOutlineColor(sf::Color(60, 60, 100));
+        panel.setOutlineThickness(1.5f);
+        renderWindow.draw(panel);
 
-		// ── Basit parçacık sistemi ────────────────────────────────────────────────
-		struct SimpleParticle {
-			sf::Vector2f pos, vel;
-			sf::Color color;
-			float life, maxLife, size;
-		};
+        if (!fontLoaded) return;
 
-		void addLineClearParticles(const std::vector<int>& rows) {
-			for (int r : rows) {
-				for (int c = 0; c < BOARD_COLS; ++c) {
-					for (int k = 0; k < 4; ++k) {
-						SimpleParticle p;
-						p.pos = { BOARD_X + c * CELL_SIZE + CELL_SIZE * 0.5f,
-								   BOARD_Y + r * CELL_SIZE + CELL_SIZE * 0.5f };
-						float angle = (rand() % 360) * 3.14159f / 180.f;
-						float spd = 60.f + rand() % 120;
-						p.vel = { std::cos(angle) * spd, std::sin(angle) * spd };
-						p.color = sf::Color(200 + rand() % 55, 200 + rand() % 55, 100 + rand() % 155, 255);
-						p.maxLife = p.life = 0.4f + (rand() % 30) / 100.f;
-						p.size = 3.f + rand() % 4;
-						m_particles.push_back(p);
-					}
-				}
-			}
-		}
+        // Başlık
+        txt(renderWindow, "GUCLER", {6.f, BOARD_Y + 8.f}, 13, sf::Color(180, 180, 255));
 
-		void addPlaceParticles(sf::Vector2f pos) {
-			for (int k = 0; k < 8; ++k) {
-				SimpleParticle p;
-				p.pos = pos;
-				float angle = (rand() % 360) * 3.14159f / 180.f;
-				float spd = 40.f + rand() % 80;
-				p.vel = { std::cos(angle) * spd, std::sin(angle) * spd };
-				p.color = sf::Color(100 + rand() % 155, 200, 255, 220);
-				p.maxLife = p.life = 0.25f + (rand() % 20) / 100.f;
-				p.size = 4.f;
-				m_particles.push_back(p);
-			}
-		}
+        auto& powers = gameState.slotMachine.powers;
 
-		void updateParticles(float dt) {
-			for (auto& p : m_particles) {
-				p.pos += p.vel * dt;
-				p.vel.y += 200.f * dt; // Yerçekimi
-				p.life -= dt;
-			}
-			m_particles.erase(
-				std::remove_if(m_particles.begin(), m_particles.end(),
-					[](const SimpleParticle& p) { return p.life <= 0.f; }),
-				m_particles.end());
-		}
+        if (powers.empty()) {
+            txt(renderWindow, "(bos)", {10.f, BOARD_Y + 30.f}, 11, sf::Color(80, 80, 100));
+        }
 
-		void renderParticles(sf::RenderWindow& window) {
-			sf::CircleShape circle;
-			for (const auto& p : m_particles) {
-				float t = p.life / p.maxLife;
-				sf::Color c = p.color;
-				c.a = static_cast<std::uint8_t>(t * 255);
-				circle.setRadius(p.size * t);
-				circle.setFillColor(c);
-				circle.setOrigin({ circle.getRadius(), circle.getRadius() });
-				circle.setPosition(p.pos);
-				window.draw(circle);
-			}
-		}
+        for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
+            float y = BOARD_Y + 28.f + i * 44.f;
 
-		// ── Sağ panel: next parçalar, skor ───────────────────────────────────────
-		void renderSidePanel(sf::RenderWindow& window) {
-			float panelX = BOARD_X + BOARD_PIXEL_W + 20.f;
-			float panelY = BOARD_Y;
+            // Buton arka planı
+            sf::RectangleShape btn(sf::Vector2f{LEFT_PANEL_W - 8.f, 38.f});
+            btn.setPosition(sf::Vector2f{4.f, y});
 
-			// Arkaplan
-			sf::RectangleShape panel({ float(WIN_W) - panelX - 10.f, BOARD_PIXEL_H });
-			panel.setPosition({ panelX, panelY });
-			panel.setFillColor(sf::Color(18, 18, 30));
-			panel.setOutlineColor(sf::Color(60, 60, 100));
-			panel.setOutlineThickness(1.5f);
-			window.draw(panel);
+            bool hovered = powerSelectMode && hoveredPowerIdx == i;
+            sf::Color c  = powers[i].color();
+            btn.setFillColor(sf::Color(c.r/4, c.g/4, c.b/4, hovered ? 220 : 160));
+            btn.setOutlineColor(hovered ? c : sf::Color(c.r/2, c.g/2, c.b/2, 160));
+            btn.setOutlineThickness(hovered ? 2.f : 1.f);
+            renderWindow.draw(btn);
 
-			if (!m_fontLoaded) return;
+            // Güç adı (2 satıra böl)
+            std::string name = powers[i].name();
+            txt(renderWindow, name, {8.f, y + 4.f}, 10, sf::Color(c.r, c.g, c.b, 220));
 
-			// Başlık
-			drawText(window, "SONRAKI", { panelX + 10.f, panelY + 10.f }, 14,
-				sf::Color(160, 160, 220));
+            // "KULLAN" label
+            if (powerSelectMode)
+                txt(renderWindow, "tikla!", {8.f, y + 20.f}, 9, sf::Color(200, 200, 100));
+        }
 
-			// Sonraki 3 parça
-			for (int i = 0; i < 3; ++i) {
-				drawMiniPiece(window, m_gameState.nextPieces[i],
-					{ panelX + 20.f, panelY + 40.f + i * 70.f }, 18.f);
-			}
+        // "Güç kullan" modu toggle butonu
+        if (!powers.empty()) {
+            float btnY = BOARD_Y + BOARD_PIXEL_H - 36.f;
+            sf::RectangleShape toggleBtn(sf::Vector2f{LEFT_PANEL_W - 8.f, 30.f});
+            toggleBtn.setPosition(sf::Vector2f{4.f, btnY});
+            toggleBtn.setFillColor(powerSelectMode
+                ? sf::Color(80, 180, 80, 200)
+                : sf::Color(40, 80, 40, 160));
+            toggleBtn.setOutlineColor(sf::Color(100, 200, 100, 200));
+            toggleBtn.setOutlineThickness(1.5f);
+            renderWindow.draw(toggleBtn);
+            txt(renderWindow, powerSelectMode ? "IPTAL" : "GUC KULLAN",
+                {8.f, btnY + 7.f}, 11, sf::Color::White);
+        }
+    }
 
-			// Skor bilgileri
-			float infoY = panelY + 260.f;
-			drawText(window, "SKOR", { panelX + 10.f, infoY }, 13, sf::Color(140, 140, 200));
-			drawText(window, std::to_string(m_gameState.m_score),
-				{ panelX + 10.f, infoY + 18.f }, 18, sf::Color(255, 255, 100));
-			drawText(window, "SEVIYE", { panelX + 10.f, infoY + 50.f }, 13, sf::Color(140, 140, 200));
-			drawText(window, std::to_string(m_gameState.level),
-				{ panelX + 10.f, infoY + 68.f }, 18, sf::Color(100, 255, 180));
-			drawText(window, "SATIRLAR", { panelX + 10.f, infoY + 100.f }, 13, sf::Color(140, 140, 200));
-			drawText(window, std::to_string(m_gameState.linesCleared),
-				{ panelX + 10.f, infoY + 118.f }, 18, sf::Color(180, 220, 255));
+    // Güç butonuna tıklama
+    void handlePowerClick(sf::Vector2f mouse) {
+        auto& powers = gameState.slotMachine.powers;
 
-			// Kontroller
-			float ctrlY = panelY + BOARD_PIXEL_H - 120.f;
-			drawText(window, "KONTROLLER", { panelX + 10.f, ctrlY }, 12, sf::Color(100, 100, 160));
-			drawText(window, "Surukle: Yerlestir", { panelX + 10.f, ctrlY + 20.f }, 11, sf::Color(140, 140, 180));
-			drawText(window, "Sag tik: Dondur", { panelX + 10.f, ctrlY + 36.f }, 11, sf::Color(140, 140, 180));
-			drawText(window, "P: Durdur / Devam", { panelX + 10.f, ctrlY + 52.f }, 11, sf::Color(140, 140, 180));
-			drawText(window, "R: Yeniden Baslat", { panelX + 10.f, ctrlY + 68.f }, 11, sf::Color(140, 140, 180));
+        // Toggle butonu
+        float toggleY = BOARD_Y + BOARD_PIXEL_H - 36.f;
+        if (mouse.x < LEFT_PANEL_W &&
+            mouse.y >= toggleY && mouse.y < toggleY + 30.f) {
+            powerSelectMode = !powerSelectMode;
+            return;
+        }
 
-			drawText(window, "G: Yercekimi (Test)", { panelX + 10.f, ctrlY + 84.f }, 11, sf::Color(140, 140, 180));
+        // Güç listesi butonları
+        for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
+            float y = BOARD_Y + 28.f + i * 44.f;
+            if (mouse.x >= 4.f && mouse.x < LEFT_PANEL_W - 4.f &&
+                mouse.y >= y && mouse.y < y + 38.f)
+            {
+                executePower(i, mouse);
+                powerSelectMode = false;
+                return;
+            }
+        }
+    }
 
-			// Debug uyarı metni
-			if (m_gameState.debugDisableGravity) {
-				drawText(window, "[YERCEKIMI KAPALI]", { panelX + 10.f, ctrlY + 105.f }, 12, sf::Color(255, 100, 100));
-			}
+    // "Güç kullan" toggle butonuna tıklama (sol panelin dışından da erişilebilir)
+    void handleLeftPanelToggle(sf::Vector2f mouse) {
+        float toggleY = BOARD_Y + BOARD_PIXEL_H - 36.f;
+        if (mouse.x < LEFT_PANEL_W && mouse.y >= toggleY && mouse.y < toggleY + 30.f)
+            powerSelectMode = !powerSelectMode;
+    }
 
-			drawText(window, m_buildVersion, { panelX + 10.f, ctrlY + 125.f }, 10, sf::Color(100, 100, 120));
-		}
+    // ── Güç uygula ────────────────────────────────────────────────────────────
+    void executePower(int index, sf::Vector2f /*mousePos*/) {
+        PowerType p = gameState.activatePower(index);
+        switch (p) {
+            // I: satır temizle — en dolu satırı otomatik seç
+            case PowerType::I_Small: clearBestRow(1); break;
+            case PowerType::I_Big:   clearBestRow(2); break;
 
-		void drawMiniPiece(sf::RenderWindow& window, const Piece& piece,
-			sf::Vector2f origin, float cellSize) {
-			sf::RectangleShape cell({ cellSize - 2.f, cellSize - 2.f });
-			cell.setFillColor(piece.color());
-			sf::Color bright = piece.color();
-			bright.r = static_cast<std::uint8_t>(std::min(255, static_cast<int>(bright.r) + 60));
-			bright.g = static_cast<std::uint8_t>(std::min(255, static_cast<int>(bright.g) + 60));
-			bright.b = static_cast<std::uint8_t>(std::min(255, static_cast<int>(bright.b) + 60));
-			cell.setOutlineColor(bright);
-			cell.setOutlineThickness(-1.5f);
+            // O: düşen parçayı taşı / dondur + kolon seç
+            case PowerType::O_Small:
+                // En boş bölgeye taşı
+                gameState.applyMoveFallingToCol(BOARD_COLS / 2 - 2);
+                break;
+            case PowerType::O_Big:
+                // Düşen parçayı dondur, oyuncu bir sonraki tıklamada
+                // board üzerinde kolon seçecek
+                gameState.freezeFalling(true);
+                oPlacementMode = true;
+                break;
 
-			// Bounding box
-			int minR = 4, maxR = -1, minC = 4, maxC = -1;
-			for (auto [r, c] : piece.localCells()) {
-				minR = std::min(minR, r); maxR = std::max(maxR, r);
-				minC = std::min(minC, c); maxC = std::max(maxC, c);
-			}
-			if (maxR < 0) return;
-			for (auto [r, c] : piece.localCells()) {
-				cell.setPosition({
-					origin.x + static_cast<float>(c - minC) * cellSize + 1.f,
-					origin.y + static_cast<float>(r - minR) * cellSize + 1.f
-					});
-				window.draw(cell);
-			}
-		}
+            // T: selection parçaları yenile (jetonsuz)
+            case PowerType::T_Small:
+                gameState.freeReroll(1); // Sadece 1 slotu yenile
+                break;
+            case PowerType::T_Big:
+                gameState.freeReroll(3); // Tüm slotları yenile
+                break;
 
-		void drawText(sf::RenderWindow& window, const std::string& str,
-			sf::Vector2f pos, unsigned size,
-			sf::Color color = sf::Color(220, 220, 255)) {
-			sf::Text text(m_font);
-			text.setString(sf::String::fromUtf8(str.begin(), str.end()));
-			text.setCharacterSize(size);
-			text.setFillColor(color);
-			text.setPosition(pos);
-			window.draw(text);
-		}
+            // L / J: döndür
+            case PowerType::L_Small: gameState.applyRotateFalling(1, true);  break;
+            case PowerType::L_Big:   gameState.applyRotateFalling(2, true);  break;
+            case PowerType::J_Small: gameState.applyRotateFalling(1, false); break;
+            case PowerType::J_Big:   gameState.applyRotateFalling(2, false); break;
 
-		void renderOverlay(sf::RenderWindow& window,
-			const std::string& title, const std::string& sub) {
-			// Yarı şeffaf karartma
-			sf::RectangleShape dim({ float(WIN_W), float(WIN_H) });
-			dim.setFillColor(sf::Color(0, 0, 0, 160));
-			window.draw(dim);
+            // S: en yüksek sütun(lar)ı indir
+            case PowerType::S_Small:    gameState.applyColumnLower(1, 1); break;
+            case PowerType::S_Big:      gameState.applyColumnLower(2, 1); break;
+            case PowerType::SZ_Special: gameState.applyColumnLower(1, 2); break;
 
-			if (!m_fontLoaded) return;
+            // Z: rastgele blok patlat
+            case PowerType::Z_Small: gameState.applyRandomBlockClear(1); break;
+            case PowerType::Z_Big:   gameState.applyRandomBlockClear(3); break;
 
-			sf::Text t(m_font);
-			t.setString(sf::String::fromUtf8(title.begin(), title.end()));
-			t.setCharacterSize(42);
-			t.setFillColor(sf::Color(255, 220, 60));
-			t.setStyle(sf::Text::Bold);
-			auto bounds = t.getLocalBounds();
-			t.setPosition({ (WIN_W - bounds.size.x) * 0.5f, WIN_H * 0.35f });
-			window.draw(t);
+            default: break;
+        }
+    }
 
-			sf::Text s(m_font);
-			s.setString(sf::String::fromUtf8(sub.begin(), sub.end()));
-			s.setCharacterSize(20);
-			s.setFillColor(sf::Color(200, 200, 255));
-			auto sb = s.getLocalBounds();
-			s.setPosition({ (WIN_W - sb.size.x) * 0.5f, WIN_H * 0.35f + 60.f });
-			window.draw(s);
-		}
+    // En dolu N satırı temizle (I gücü için)
+    void clearBestRow(int count) {
+        // En fazla dolu hücreye sahip satırları bul
+        std::vector<std::pair<int,int>> rowFill; // (dolu hücre sayısı, satır index)
+        for (int r = 0; r < BOARD_ROWS; ++r) {
+            int filled = 0;
+            for (int c = 0; c < BOARD_COLS; ++c)
+                if (!gameState.board.isEmpty(c, r)) filled++;
+            if (filled > 0) rowFill.emplace_back(filled, r);
+        }
+        std::sort(rowFill.rbegin(), rowFill.rend());
+        int cleared = std::min(count, static_cast<int>(rowFill.size()));
+        for (int i = 0; i < cleared; ++i)
+            gameState.applyClearRow(rowFill[i].second);
+    }
 
-		void restartGame() {
-			m_gameState = GameState(static_cast<std::uint32_t>(std::time(nullptr)));
-			m_gameState.onLinesCleared = [this](int /*n*/, std::vector<int> rows) {
-				m_flashRows = rows; m_flashTimer = 0.f; m_flashDuration = 0.35f;
-				addLineClearParticles(rows);
-				};
-			m_gameState.onGameOver = [this]() { m_showGameOver = true; };
-			m_showGameOver = false;
-			m_particles.clear();
-			m_flashRows.clear();
-			m_flashTimer = m_flashDuration = 0.f;
-		}
+    // ── O_Big: kolon seçim ipucu ─────────────────────────────────────────────
+    void renderOPlacementHint(sf::RenderWindow& renderWindow) {
+        if (!fontLoaded) return;
 
-		sf::RenderWindow& m_window;
-		GameState         m_gameState;
-		BoardRenderer     m_boardRenderer;
-		SelectionBar      m_selectionBar;
+        // Yarı şeffaf overlay
+        sf::RectangleShape overlay(sf::Vector2f{float(BOARD_PIXEL_W), 40.f});
+        overlay.setPosition(sf::Vector2f{BOARD_X, BOARD_Y - 44.f});
+        overlay.setFillColor(sf::Color(60, 20, 100, 200));
+        overlay.setOutlineColor(sf::Color(180, 80, 255, 220));
+        overlay.setOutlineThickness(1.5f);
+        renderWindow.draw(overlay);
 
-		sf::Font          m_font;
-		bool              m_fontLoaded{ false };
-		bool              m_showGameOver{ false };
+        sf::Text hint(font, "Dusen parcayi koymak istedigin kolona tikla!", 12);
+        hint.setFillColor(sf::Color(220, 180, 255));
+        auto b = hint.getLocalBounds();
+        hint.setPosition(sf::Vector2f{
+            BOARD_X + (BOARD_PIXEL_W - b.size.x) * 0.5f,
+            BOARD_Y - 40.f});
+        renderWindow.draw(hint);
+    }
 
-		// Flash animasyonu
-		std::vector<int>  m_flashRows;
-		float             m_flashTimer{ 0.f };
-		float             m_flashDuration{ 0.f };
+    // ── Slot sonuç banner ─────────────────────────────────────────────────────
+    void renderSlotResult(sf::RenderWindow& renderWindow) {
+        if (!lastSlotResult.hasCombo) return;
 
-		// Parçacıklar
-		std::vector<SimpleParticle> m_particles;
+        float alpha = std::min(slotResultTimer / 0.5f, 1.f); // Fade in/out
+        if (slotResultTimer < 0.5f) alpha = slotResultTimer / 0.5f;
 
-		std::string m_buildVersion;
-	};
+        sf::RectangleShape banner(sf::Vector2f{300.f, 60.f});
+        banner.setPosition(sf::Vector2f{
+            BOARD_X + (BOARD_PIXEL_W - 300.f) * 0.5f,
+            BOARD_Y + BOARD_PIXEL_H * 0.3f});
+        banner.setFillColor(sf::Color(20, 20, 40,
+            static_cast<std::uint8_t>(200 * alpha)));
+        banner.setOutlineColor(sf::Color(200, 200, 80,
+            static_cast<std::uint8_t>(255 * alpha)));
+        banner.setOutlineThickness(2.f);
+        renderWindow.draw(banner);
+
+        if (!fontLoaded) return;
+
+        std::string comboText = (lastSlotResult.comboCount >= 3)
+            ? "3x KOMBO!" : "2x KOMBO!";
+        PowerSlot tempSlot; tempSlot.type = lastSlotResult.power;
+        std::string powerText = tempSlot.name();
+
+        sf::Text t1(font, comboText, 20);
+        t1.setFillColor(sf::Color(255, 220, 50,
+            static_cast<std::uint8_t>(255 * alpha)));
+        t1.setStyle(sf::Text::Bold);
+        auto b1 = t1.getLocalBounds();
+        t1.setPosition(sf::Vector2f{
+            banner.getPosition().x + (300.f - b1.size.x) * 0.5f,
+            banner.getPosition().y + 6.f});
+        renderWindow.draw(t1);
+
+        sf::Text t2(font, powerText, 13);
+        t2.setFillColor(sf::Color(200, 200, 255,
+            static_cast<std::uint8_t>(220 * alpha)));
+        auto b2 = t2.getLocalBounds();
+        t2.setPosition(sf::Vector2f{
+            banner.getPosition().x + (300.f - b2.size.x) * 0.5f,
+            banner.getPosition().y + 34.f});
+        renderWindow.draw(t2);
+    }
+
+    // ── Jeton parıltısı ───────────────────────────────────────────────────────
+    void drawTokenGlow(sf::RenderWindow& renderWindow) {
+        auto cells = gameState.fallingPiece.cells();
+        for (auto [r, c] : cells) {
+            if (r < 0) continue;
+            sf::CircleShape glow(CELL_SIZE * 0.6f);
+            glow.setOrigin(sf::Vector2f{CELL_SIZE*0.6f, CELL_SIZE*0.6f});
+            glow.setPosition(sf::Vector2f{
+                BOARD_X + c * CELL_SIZE + CELL_SIZE * 0.5f,
+                BOARD_Y + r * CELL_SIZE + CELL_SIZE * 0.5f});
+            float pulse = 0.5f + 0.5f * std::sin(
+                static_cast<float>(std::clock()) / 200.f);
+            glow.setFillColor(sf::Color(255, 220, 50,
+                static_cast<std::uint8_t>(60 + 80 * pulse)));
+            renderWindow.draw(glow);
+        }
+    }
+
+    // ── Drag preview ─────────────────────────────────────────────────────────
+    void updateDragPreview() {
+        if (!selectionBar.isDragging()) {
+            boardRenderer.setDragPreview(std::nullopt, true); return;
+        }
+        const auto& drag = selectionBar.dragState();
+        sf::FloatRect br = boardRenderer.boardRect();
+
+        // DÜZELTME: SFML 3 formatına göre esneklik payı
+        br.position.x -= 120.f;  // Sola doğru 120 piksel esneklik
+        br.size.x += 240.f;      // Toplam genişliği artırarak sağa da esneklik
+
+        if (!br.contains(drag.mousePos)) {
+            boardRenderer.setDragPreview(std::nullopt, true); return;
+        }
+        int col = boardRenderer.screenXToCol(drag.mousePos.x);
+        int row = static_cast<int>((drag.mousePos.y - BOARD_Y) / CELL_SIZE);
+        auto [valid, placed] = gameState.board.findDropPosition(drag.piece, col);
+        boardRenderer.setDragPreview(placed, valid);
+    }
+
+    // ── Flash ─────────────────────────────────────────────────────────────────
+    void updateFlash(float dt) {
+        if (flashDuration <= 0.f) return;
+        flashTimer += dt;
+        if (flashTimer >= flashDuration) {
+            flashTimer = flashDuration = 0.f;
+            flashRows.clear();
+            boardRenderer.setFlashRows({}, 0.f);
+        }
+    }
+
+    // ── Parçacıklar ───────────────────────────────────────────────────────────
+    struct SimpleParticle { sf::Vector2f pos, vel; sf::Color color; float life, maxLife, size; };
+
+    void addLineClearParticles(const std::vector<int>& rows) {
+        for (int r : rows) for (int c=0; c<BOARD_COLS; ++c) for (int k=0; k<4; ++k) {
+            SimpleParticle p;
+            p.pos = {BOARD_X+c*CELL_SIZE+CELL_SIZE*0.5f, BOARD_Y+r*CELL_SIZE+CELL_SIZE*0.5f};
+            float a=static_cast<float>(rand()%360)*3.14159f/180.f;
+            float s=60.f+static_cast<float>(rand()%120);
+            p.vel={std::cos(a)*s,std::sin(a)*s};
+            p.color=sf::Color(static_cast<std::uint8_t>(200+rand()%55),
+                              static_cast<std::uint8_t>(200+rand()%55),
+                              static_cast<std::uint8_t>(100+rand()%155),255);
+            p.maxLife=p.life=0.4f+static_cast<float>(rand()%30)/100.f;
+            p.size=3.f+static_cast<float>(rand()%4);
+            particles.push_back(p);
+        }
+    }
+
+    void addPlaceParticles(sf::Vector2f pos) {
+        for (int k=0; k<8; ++k) {
+            SimpleParticle p; p.pos=pos;
+            float a=static_cast<float>(rand()%360)*3.14159f/180.f;
+            float s=40.f+static_cast<float>(rand()%80);
+            p.vel={std::cos(a)*s,std::sin(a)*s};
+            p.color=sf::Color(static_cast<std::uint8_t>(100+rand()%155),200,255,220);
+            p.maxLife=p.life=0.25f+static_cast<float>(rand()%20)/100.f;
+            p.size=4.f;
+            particles.push_back(p);
+        }
+    }
+
+    void updateParticles(float dt) {
+        for (auto& p : particles) { p.pos+=p.vel*dt; p.vel.y+=200.f*dt; p.life-=dt; }
+        particles.erase(
+            std::remove_if(particles.begin(), particles.end(),
+                [](const SimpleParticle& p){ return p.life<=0.f; }),
+            particles.end());
+    }
+
+    void renderParticles(sf::RenderWindow& renderWindow) {
+        sf::CircleShape circle;
+        for (const auto& p : particles) {
+            float t=p.life/p.maxLife;
+            sf::Color c=p.color; c.a=static_cast<std::uint8_t>(t*255);
+            circle.setRadius(p.size*t); circle.setFillColor(c);
+            float r=circle.getRadius();
+            circle.setOrigin(sf::Vector2f{r,r});
+            circle.setPosition(p.pos); renderWindow.draw(circle);
+        }
+    }
+
+    // ── Sağ panel ─────────────────────────────────────────────────────────────
+    void renderSidePanel(sf::RenderWindow& renderWindow) {
+        float px=BOARD_X+BOARD_PIXEL_W+10.f, py=BOARD_Y;
+        float pw=float(WIN_W)-px-5.f;
+
+        sf::RectangleShape panel(sf::Vector2f{pw, BOARD_PIXEL_H});
+        panel.setPosition(sf::Vector2f{px,py});
+        panel.setFillColor(sf::Color(18,18,30));
+        panel.setOutlineColor(sf::Color(60,60,100));
+        panel.setOutlineThickness(1.5f);
+        renderWindow.draw(panel);
+
+        if (!fontLoaded) return;
+
+        txt(renderWindow,"SONRAKI",{px+8,py+8},13,{160,160,220});
+        for (int i=0;i<3;++i) drawMiniPiece(renderWindow,gameState.nextPieces[i],{px+12,py+28.f+i*60},16);
+
+        float iy=py+220;
+        txt(renderWindow,"SKOR",      {px+8,iy},     12,{140,140,200});
+        txt(renderWindow,std::to_string(gameState.score),{px+8,iy+16},16,{255,255,100});
+        txt(renderWindow,"SEVIYE",    {px+8,iy+44},   12,{140,140,200});
+        txt(renderWindow,std::to_string(gameState.level),{px+8,iy+60},16,{100,255,180});
+        txt(renderWindow,"SATIRLAR",  {px+8,iy+88},   12,{140,140,200});
+        txt(renderWindow,std::to_string(gameState.linesCleared),{px+8,iy+104},16,{180,220,255});
+
+        // Jeton
+        float jy=iy+140;
+        txt(renderWindow,"JETON",{px+8,jy},12,{220,200,80});
+        txt(renderWindow,std::to_string(gameState.slotMachine.tokens),{px+8,jy+16},18,{255,220,50});
+    }
+
+    void drawMiniPiece(sf::RenderWindow& renderWindow, const Piece& piece,
+                       sf::Vector2f origin, float cellSize) {
+        sf::RectangleShape cell(sf::Vector2f{cellSize-2.f,cellSize-2.f});
+        cell.setFillColor(piece.color());
+        sf::Color bright=piece.color();
+        bright.r=static_cast<std::uint8_t>(std::min(255,int(bright.r)+60));
+        bright.g=static_cast<std::uint8_t>(std::min(255,int(bright.g)+60));
+        bright.b=static_cast<std::uint8_t>(std::min(255,int(bright.b)+60));
+        cell.setOutlineColor(bright); cell.setOutlineThickness(-1.5f);
+        int minR=4,maxR=-1,minC=4,maxC=-1;
+        for (auto [r,c]:piece.localCells()){minR=std::min(minR,r);maxR=std::max(maxR,r);minC=std::min(minC,c);maxC=std::max(maxC,c);}
+        if (maxR<0) return;
+        for (auto [r,c]:piece.localCells()){
+            cell.setPosition(sf::Vector2f{origin.x+(c-minC)*cellSize+1.f,origin.y+(r-minR)*cellSize+1.f});
+            renderWindow.draw(cell);
+        }
+    }
+
+    void txt(sf::RenderWindow& renderWindow, const std::string& s,
+             sf::Vector2f pos, unsigned sz, sf::Color col) {
+        sf::Text t(font, s, sz);
+        t.setFillColor(col); t.setPosition(pos); renderWindow.draw(t);
+    }
+
+    void renderHUD(sf::RenderWindow& /*renderWindow*/) {
+        // HUD alanı reserved — ileride can barı vb.
+    }
+
+    void renderOverlay(sf::RenderWindow& renderWindow,
+                       const std::string& title, const std::string& sub) {
+        sf::RectangleShape dim(sf::Vector2f{float(WIN_W),float(WIN_H)});
+        dim.setFillColor(sf::Color(0,0,0,160)); renderWindow.draw(dim);
+        if (!fontLoaded) return;
+        sf::Text t(font,title,38);
+        t.setFillColor(sf::Color(255,220,60)); t.setStyle(sf::Text::Bold);
+        auto b=t.getLocalBounds();
+        t.setPosition(sf::Vector2f{(WIN_W-b.size.x)*0.5f,WIN_H*0.35f}); renderWindow.draw(t);
+        sf::Text s(font,sub,18); s.setFillColor(sf::Color(200,200,255));
+        auto sb=s.getLocalBounds();
+        s.setPosition(sf::Vector2f{(WIN_W-sb.size.x)*0.5f,WIN_H*0.35f+50.f}); renderWindow.draw(s);
+    }
+
+    void restartGame() {
+        gameState=GameState(static_cast<std::uint32_t>(std::time(nullptr)));
+        gameState.onLinesCleared=[this](int,std::vector<int> rows){
+            flashRows=rows;flashTimer=0.f;flashDuration=0.35f;
+            addLineClearParticles(rows);};
+        gameState.onGameOver=[this](){showGameOver=true;};
+        gameState.onSlotResult=[this](SlotResult r){lastSlotResult=r;slotResultTimer=2.5f;};
+        showGameOver=false; particles.clear(); flashRows.clear();
+        flashTimer=flashDuration=0.f;
+        powerSelectMode=false;
+    }
+
+    sf::RenderWindow& window;
+    GameState         gameState;
+    BoardRenderer     boardRenderer;
+    SelectionBar      selectionBar;
+    sf::Font          font;
+    bool              fontLoaded   {false};
+    bool              showGameOver {false};
+
+    // Flash
+    std::vector<int> flashRows;
+    float flashTimer{0.f}, flashDuration{0.f};
+
+    // Parçacıklar
+    std::vector<SimpleParticle> particles;
+
+    // Slot machine sonuç gösterimi
+    SlotResult lastSlotResult;
+    float      slotResultTimer {0.f};
+
+    // Güç seçim modu
+    bool powerSelectMode  {false};
+    int  selectedPowerIdx {-1};
+    int  hoveredPowerIdx  {-1};
+
+    // O_Big: düşen parçayı dondurdu, oyuncu board'a tıklayacak
+    bool oPlacementMode   {false};
+};
 
 } // namespace tetris

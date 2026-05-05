@@ -39,6 +39,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(TetrisGame src/main_tetris.cpp
         src/tetris/Board.hpp
+        src/tetris/SlotMachine.hpp
 )
 target_link_libraries(TetrisGame PRIVATE EngineLib)
 

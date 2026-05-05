@@ -35,6 +35,9 @@ struct GameState {
     bool        debugDisableGravity { false };
     bool        fallingFrozen       { false }; // Slot machine açıkken dondur
 
+    // Zamanı Durdurma Sayacı
+    float       timeStopTimer       { 0.f };
+
     // Düşen parçanın jeton taşıyıp taşımadığı
     bool        fallingHasToken     { false };
 
@@ -68,13 +71,27 @@ struct GameState {
     // ── Güncelleme ───────────────────────────────────────────────────────────
     void update(float dt) {
         if (gameOver || paused) return;
-        if (!debugDisableGravity && !fallingFrozen) {
+
+        // Zamanı durdurma gücü aktifse sayacı azalt
+        if (timeStopTimer > 0.f) {
+            timeStopTimer -= dt;
+            // Sayacın eksiye düşmesini engelle
+            if (timeStopTimer < 0.f) timeStopTimer = 0.f;
+        }
+
+        // Eğer zaman durmamışsa, dondurulmamışsa ve yerçekimi açıksa düşmeye devam et
+        if (!debugDisableGravity && !fallingFrozen && timeStopTimer <= 0.f) {
             fallAccum += dt;
             if (fallAccum >= fallInterval) {
                 fallAccum -= fallInterval;
                 stepFallingPiece();
             }
         }
+    }
+
+    // ── Zamanı Durdurma Gücü ─────────────────────────────────────────────────
+    void applyTimeStop(float seconds) {
+        timeStopTimer += seconds;
     }
 
     // ── Seçim parçasını yerleştir ────────────────────────────────────────────
@@ -154,11 +171,8 @@ struct GameState {
     }
 
     // ── Board analizi ile güç uygulama ───────────────────────────────────────
-    // S_Big, S_Small, SZ_Special: en yüksek sütunu indir
-    // Board direkt değişir — TetrisScene çağırır
     void applyColumnLower(int colCount, int amount) {
         BoardAnalysis a = analyzeBoard();
-        // En yüksek N sütunu bul, her birinden 'amount' satır kaldır
         std::vector<int> sortedCols(BOARD_COLS);
         for (int i = 0; i < BOARD_COLS; ++i) sortedCols[i] = i;
         std::sort(sortedCols.begin(), sortedCols.end(), [&](int a_, int b_){
@@ -167,7 +181,6 @@ struct GameState {
         for (int n = 0; n < colCount && n < BOARD_COLS; ++n) {
             int col = sortedCols[n];
             for (int step = 0; step < amount; ++step) {
-                // O sütundaki en üst dolu hücreyi bul ve temizle
                 for (int r = 0; r < BOARD_ROWS; ++r) {
                     if (!board.isEmpty(col, r)) {
                         board.setCell(col, r, EMPTY_COLOR);
@@ -178,39 +191,31 @@ struct GameState {
         }
     }
 
-    // Z_Small / Z_Big: rastgele N blok patlat
     void applyRandomBlockClear(int count) {
-        // Dolu hücreleri topla
         std::vector<std::pair<int,int>> filled;
         for (int r = 0; r < BOARD_ROWS; ++r)
             for (int c = 0; c < BOARD_COLS; ++c)
                 if (!board.isEmpty(c, r))
                     filled.emplace_back(c, r);
 
-        // Rastgele shuffle ve ilk N tanesini temizle
         std::shuffle(filled.begin(), filled.end(), rng);
         int cleared = std::min(count, static_cast<int>(filled.size()));
         for (int i = 0; i < cleared; ++i)
             board.setCell(filled[i].first, filled[i].second, EMPTY_COLOR);
     }
 
-    // I_Small / I_Big: belirli satırları temizle
-    // Hangi satır? TetrisScene oyuncunun seçtiği satırı verir
     void applyClearRow(int row) {
         if (row >= 0 && row < BOARD_ROWS) {
-            for (int c = 0; c < BOARD_COLS; ++c)
-                board.setCell(c, row, EMPTY_COLOR);
+            board.removeRow(row);
         }
     }
 
-    // O_Small: düşen parçayı yeni kolona taşı
     void applyMoveFallingToCol(int newCol) {
         Piece moved = fallingPiece;
         moved.col = std::clamp(newCol, 0, BOARD_COLS - 4);
         if (board.canPlace(moved)) fallingPiece = moved;
     }
 
-    // L/J güçleri: düşen parçayı döndür
     void applyRotateFalling(int times, bool left) {
         for (int i = 0; i < times; ++i) {
             Piece rotated = fallingPiece;
@@ -353,16 +358,30 @@ private:
     int chooseFallingCol(const Piece& piece) {
         BoardAnalysis a = analyzeBoard();
         int minC=INT_MAX,maxC=INT_MIN;
-        for (auto [r,c] : piece.localCells()) { minC=std::min(minC,c); maxC=std::max(maxC,c); }
-        int pieceWidth=(minC==INT_MAX)?1:(maxC-minC+1);
-        int maxCol=BOARD_COLS-pieceWidth;
-        int targetCol=std::clamp(a.emptiest_col_start-minC, 0, maxCol);
-        std::uniform_real_distribution<float> chance(0.f,1.f);
-        if (chance(rng) < 0.7f) {
-            std::uniform_int_distribution<int> jitter(-1,1);
-            return std::clamp(targetCol+jitter(rng), 0, maxCol);
+
+        for (auto [r,c] : piece.localCells())
+        {
+            minC=std::min(minC,c);
+            maxC=std::max(maxC,c);
         }
-        std::uniform_int_distribution<int> colDist(0,maxCol);
+
+        if (minC == INT_MAX) { minC = 0; maxC = 0; }
+
+        int minAllowedCol = -minC;
+
+        int maxAllowedCol = BOARD_COLS - 1 - maxC;
+
+        int targetCol = std::clamp(a.emptiest_col_start - minC, minAllowedCol, maxAllowedCol);
+
+        std::uniform_real_distribution<float> chance(0.f, 1.f);
+        if (chance(rng) < 0.7f) {
+            std::uniform_int_distribution<int> jitter(-1, 1);
+            // Hedefe yakın rastgele bir sapma eklerken de yeni sınırları kullanıyoruz
+            return std::clamp(targetCol + jitter(rng), minAllowedCol, maxAllowedCol);
+        }
+
+        // 3. ADIM: Tamamen rastgele seçim yapılacaksa, sadece güvenli sınırlar içinde zarlıyoruz
+        std::uniform_int_distribution<int> colDist(minAllowedCol, maxAllowedCol);
         return colDist(rng);
     }
 
@@ -374,6 +393,9 @@ private:
         // Jeton şansı: TOKEN_CHANCE %
         std::uniform_int_distribution<int> tokenRoll(0, 99);
         fallingHasToken = (tokenRoll(rng) < SlotMachine::TOKEN_CHANCE);
+
+        // DÜZELTME: Jetonlu parçanın kalıcı altın rengine sahip olması için bayrağı aktar
+        fallingPiece.hasToken = fallingHasToken;
 
         nextPieces[0]=nextPieces[1];
         nextPieces[1]=nextPieces[2];
@@ -428,4 +450,4 @@ private:
     }
 };
 
-} // namespace tetrisk
+} // namespace tetris

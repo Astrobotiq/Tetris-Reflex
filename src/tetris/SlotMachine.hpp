@@ -1,14 +1,4 @@
-﻿//
-// Created by e-r-e on 5/5/2026.
-//
-
-#ifndef SIMPLEENGINE2D_SLOTMACHINE_HPP
-#define SIMPLEENGINE2D_SLOTMACHINE_HPP
-
-#endif //SIMPLEENGINE2D_SLOTMACHINE_HPP
-
-
-#pragma once
+﻿#pragma once
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SlotMachine.hpp  —  Jeton sistemi, reroll ve güç mekaniği
@@ -38,8 +28,8 @@ enum class PowerType {
     I_Big,     // 3×I → seçilen 2 satırı temizle
 
     // O kombinasyonları
-    O_Small,   // 2×O → düşen parçanın kolonunu değiştir
-    O_Big,     // 3×O → düşen parçayı dondur, istediğin yere koy
+    O_Small,   // 2×O → Zamanı 4 saniye durdur
+    O_Big,     // 3×O → Zamanı 8 saniye durdur
 
     // T kombinasyonları
     T_Small,   // 2×T → bir sonraki parçayı yeniden seç
@@ -78,8 +68,8 @@ struct PowerSlot {
         switch (type) {
             case PowerType::I_Small:    return "I×2: 1 Satir Temizle";
             case PowerType::I_Big:      return "I×3: 2 Satir Temizle";
-            case PowerType::O_Small:    return "O×2: Kolon Degistir";
-            case PowerType::O_Big:      return "O×3: Serbestce Koy";
+            case PowerType::O_Small:    return "O×2: 4sn Durdur";
+            case PowerType::O_Big:      return "O×3: 8sn Durdur";
             case PowerType::T_Small:    return "T×2: Parçayi Yenile";
             case PowerType::T_Big:      return "T×3: Istedigin Parça";
             case PowerType::L_Small:    return "L×2: Sola Döndür";

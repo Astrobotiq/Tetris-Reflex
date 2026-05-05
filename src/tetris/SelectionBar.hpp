@@ -45,8 +45,7 @@ public:
     void setFont(const sf::Font& f) { fontPtr = &f; }
 
     // ── Update (animasyon için her karede çağrıl) ─────────────────────────────
-    // Parametre kullanılmadığı için ismini yorum satırına alarak C4100 uyarısını engelliyoruz
-    void update(float dt, GameState& /*gs*/) {
+    void update(float dt, GameState& gs) {
         if (!anim.spinning) return;
 
         anim.timer += dt;
@@ -69,6 +68,9 @@ public:
             // Animasyon bitti — gerçek parçaları göster
             anim.spinning = false;
             anim.timer    = 0.f;
+
+            // DÜZELTME: Animasyon bittiğinde oyunu tekrar akmaya bırak
+            gs.freezeFalling(false);
         }
     }
 
@@ -173,6 +175,8 @@ private:
         gs.reroll();
         anim.spinning = true;
         anim.timer    = 0.f;
+
+        gs.freezeFalling(true);
     }
 
     sf::FloatRect rerollButtonBounds() const {

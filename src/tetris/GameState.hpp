@@ -52,6 +52,10 @@ namespace tetris {
         int level{1};
         float fallInterval{1.0f};
         float fallAccum{0.f};
+        int scoreTokenMilestone{0}; // Son jeton verilen puan eşiği (1000'in katları)
+
+        // Bir sonraki parçanın (nextPieces[0]) düşeceği sütun — spawn anında bu değer kullanılır
+        int nextPieceCol{BOARD_COLS / 2 - 2};
 
         std::array<Piece, 3> nextPieces;
 
@@ -68,6 +72,8 @@ namespace tetris {
             : rng(seed) {
             for (auto &p: nextPieces) p = spawnPieceRandom();
             refreshSelectionPieces();
+            // İlk spawnFallingPiece nextPieceCol'u kullanacak, önceden hesapla
+            nextPieceCol = chooseFallingCol(nextPieces[0]);
             spawnFallingPiece();
         }
 
@@ -423,18 +429,21 @@ namespace tetris {
         void spawnFallingPiece() {
             fallingPiece = nextPieces[0];
             fallingPiece.row = 0;
-            fallingPiece.col = chooseFallingCol(fallingPiece);
+            // Önceki turda hesaplanıp saklanan col'u kullan (okla gösterilen yer)
+            fallingPiece.col = nextPieceCol;
 
             // Jeton şansı: TOKEN_CHANCE %
             std::uniform_int_distribution<int> tokenRoll(0, 99);
             fallingHasToken = (tokenRoll(rng) < SlotMachine::TOKEN_CHANCE);
 
-            // DÜZELTME: Jetonlu parçanın kalıcı altın rengine sahip olması için bayrağı aktar
             fallingPiece.hasToken = fallingHasToken;
 
             nextPieces[0] = nextPieces[1];
             nextPieces[1] = nextPieces[2];
             nextPieces[2] = spawnPieceRandom();
+
+            // Yeni nextPieces[0] için col'u şimdiden hesapla ve sakla
+            nextPieceCol = chooseFallingCol(nextPieces[0]);
 
             if (!board.canPlace(fallingPiece)) {
                 gameOver = true;
@@ -485,6 +494,15 @@ namespace tetris {
                 int pts = LINE_SCORES[std::min(n, 4)] * level;
                 score += pts;
                 linesCleared += n;
+
+                // Her 1000 puanın katında 1 jeton ver
+                int newMilestone = (score / 1000);
+                if (newMilestone > scoreTokenMilestone) {
+                    int tokensToAdd = newMilestone - scoreTokenMilestone;
+                    scoreTokenMilestone = newMilestone;
+                    for (int t = 0; t < tokensToAdd; ++t) slotMachine.addToken(1);
+                }
+
                 recalcLevel();
                 if (onLinesCleared) onLinesCleared(n, clearedRows);
             }

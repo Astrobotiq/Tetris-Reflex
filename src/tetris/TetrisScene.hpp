@@ -34,6 +34,12 @@ namespace tetris {
                 flashTimer = 0.f;
                 flashDuration = 0.35f;
                 addLineClearParticles(rows);
+                // 1000 puan jeton milestone bildirimi
+                static int lastMilestone = 0;
+                if (gameState.scoreTokenMilestone > lastMilestone) {
+                    lastMilestone = gameState.scoreTokenMilestone;
+                    tokenMilestoneNotifTimer = 2.0f;
+                }
             };
             gameState.onGameOver = [this]() { showGameOver = true; };
 
@@ -82,6 +88,13 @@ namespace tetris {
             updateFlash(dt);
             updateParticles(dt);
             updateDragPreview();
+
+            // Ok animasyonu fazı (sürekli döngü, 1.2 sn periyot)
+            arrowPhase += dt / 1.2f;
+            if (arrowPhase > 1.f) arrowPhase -= 1.f;
+
+            // Jeton milestone bildirimi sayacı
+            if (tokenMilestoneNotifTimer > 0.f) tokenMilestoneNotifTimer -= dt;
 
             // Slot result ekranda ne kadar kalsın
             if (slotResultTimer > 0.f) slotResultTimer -= dt;
@@ -150,6 +163,10 @@ namespace tetris {
             boardRenderer.render(renderWindow, gameState.board,
                                  gameState.fallingPiece, true);
 
+            // Bir sonraki parçanın düşeceği sütuna akan ok göstergesi
+            if (!gameState.gameOver && !gameState.paused)
+                renderNextPieceArrow(renderWindow);
+
             // Jeton taşıyan düşen parça üzerinde parlama
             if (gameState.fallingHasToken)
                 drawTokenGlow(renderWindow);
@@ -186,6 +203,10 @@ namespace tetris {
             if (slotResultTimer > 0.f)
                 renderSlotResult(renderWindow);
 
+            // 1000 puan jeton bildirimi
+            if (tokenMilestoneNotifTimer > 0.f)
+                renderTokenMilestoneNotif(renderWindow);
+
             renderWindow.setView(renderWindow.getDefaultView());
             renderHUD(renderWindow);
 
@@ -196,6 +217,110 @@ namespace tetris {
         }
 
     private:
+        // ── Sonraki parçanın düşeceği sütun — akan ok göstergesi ─────────────────
+        void renderNextPieceArrow(sf::RenderWindow &renderWindow) {
+            // nextPieces[0]'ın genişliğini hesapla
+            const Piece &nextP = gameState.nextPieces[0];
+            int minC = 4, maxC = -1;
+            for (auto [r, c]: nextP.localCells()) {
+                minC = std::min(minC, c);
+                maxC = std::max(maxC, c);
+            }
+            if (maxC < 0) return;
+            int pieceWidth = maxC - minC + 1;
+
+            int startCol = gameState.nextPieceCol + minC;
+            int endCol = gameState.nextPieceCol + maxC;
+
+            // Sütun aralığını tahta sınırlarına kısıt
+            startCol = std::max(0, std::min(startCol, BOARD_COLS - 1));
+            endCol = std::max(0, std::min(endCol, BOARD_COLS - 1));
+
+            // Parçanın rengini soluk kullan
+            sf::Color arrowColor = nextP.color();
+            arrowColor.a = 0; // alpha aşağıda per-ok hesaplanacak
+
+            // 3 adet ok üst üste kayar (arrowPhase ile ofset)
+            constexpr int ARROW_COUNT = 3;
+            constexpr float ARROW_SPACING = 1.f / ARROW_COUNT; // fazlarda
+            constexpr int ARROW_H = 10; // piksel yüksekliği
+            constexpr int ARROW_W = CELL_SIZE - 6; // genişlik
+
+            // Board'un üstünden ok başlangıç alanı (BOARD_Y - 28 piksel yukarısı)
+            float topY = BOARD_Y - 32.f;
+
+            sf::ConvexShape arrowShape(3); // üçgen ok
+
+            for (int col = startCol; col <= endCol; ++col) {
+                float cx = BOARD_X + col * CELL_SIZE + CELL_SIZE * 0.5f;
+
+                for (int k = 0; k < ARROW_COUNT; ++k) {
+                    // Her ok kendi fazından hareketle aşağı doğru kayar (0→1 arası)
+                    float phase = std::fmod(arrowPhase + k * ARROW_SPACING, 1.f);
+
+                    // 0 = üst (topY), 1 = tahtanın üstü (BOARD_Y - 4)
+                    float travel = (BOARD_Y - 4.f) - topY;
+                    float y = topY + phase * travel;
+
+                    // Fazın ortasında tam görünür, uçlarda soluk (fade in/out)
+                    float fade = std::sin(phase * 3.14159f); // 0→1→0
+                    std::uint8_t alpha = static_cast<std::uint8_t>(fade * 200.f);
+
+                    sf::Color c = nextP.color();
+                    c.a = alpha;
+
+                    // Üçgen ok (aşağı bakan)
+                    arrowShape.setPoint(0, {cx - ARROW_W * 0.5f, y});
+                    arrowShape.setPoint(1, {cx + ARROW_W * 0.5f, y});
+                    arrowShape.setPoint(2, {cx, y + ARROW_H});
+                    arrowShape.setFillColor(c);
+                    renderWindow.draw(arrowShape);
+                }
+            }
+
+            // Hedef sütunların üzerinde ince dikey şerit (tahtanın tamamı boyunca)
+            for (int col = startCol; col <= endCol; ++col) {
+                sf::RectangleShape stripe({float(CELL_SIZE), float(BOARD_PIXEL_H)});
+                stripe.setPosition({BOARD_X + col * CELL_SIZE, BOARD_Y});
+                sf::Color sc = nextP.color();
+                sc.a = 18;
+                stripe.setFillColor(sc);
+                renderWindow.draw(stripe);
+            }
+        }
+
+        // ── 1000 puan jeton milestone bildirimi ──────────────────────────────────
+        void renderTokenMilestoneNotif(sf::RenderWindow &renderWindow) {
+            if (!fontLoaded) return;
+            float t = tokenMilestoneNotifTimer / 2.0f; // 0→1
+            float alpha = t < 0.2f ? (t / 0.2f) : (t > 0.8f ? ((1.f - t) / 0.2f) : 1.f);
+            std::uint8_t a = static_cast<std::uint8_t>(alpha * 230);
+
+            // Arka plan kutusu
+            float bw = 210.f, bh = 44.f;
+            float bx = BOARD_X + (BOARD_PIXEL_W - bw) * 0.5f;
+            float by = BOARD_Y + 12.f;
+            sf::RectangleShape box({bw, bh});
+            box.setPosition({bx, by});
+            box.setFillColor(sf::Color(30, 20, 50, a));
+            box.setOutlineColor(sf::Color(220, 180, 60, a));
+            box.setOutlineThickness(2.f);
+            renderWindow.draw(box);
+
+            sf::Text t1(font, "+1 JETON", 15);
+            t1.setFillColor(sf::Color(255, 220, 50, a));
+            t1.setStyle(sf::Text::Bold);
+            auto b1 = t1.getLocalBounds();
+            t1.setPosition({bx + (bw - b1.size.x) * 0.5f, by + 4.f});
+            renderWindow.draw(t1);
+
+            sf::Text t2(font, "1000 puan esigi!", 11);
+            t2.setFillColor(sf::Color(200, 170, 255, a));
+            auto b2 = t2.getLocalBounds();
+            t2.setPosition({bx + (bw - b2.size.x) * 0.5f, by + 24.f});
+            renderWindow.draw(t2);
+        }
+
         // ── Sol panel: güçler listesi ─────────────────────────────────────────────
         void renderLeftPanel(sf::RenderWindow &renderWindow) {
             // Arka plan
@@ -709,6 +834,13 @@ namespace tetris {
                 flashTimer = 0.f;
                 flashDuration = 0.35f;
                 addLineClearParticles(rows);
+                // 1000 puan jeton milestone bildirimi
+                static int lastMilestone = 0;
+                lastMilestone = 0; // Restart'ta sıfırla
+                if (gameState.scoreTokenMilestone > lastMilestone) {
+                    lastMilestone = gameState.scoreTokenMilestone;
+                    tokenMilestoneNotifTimer = 2.0f;
+                }
             };
             gameState.onGameOver = [this]() { showGameOver = true; };
             gameState.onSlotResult = [this](SlotResult r) {
@@ -748,5 +880,11 @@ namespace tetris {
 
         // O_Big: düşen parçayı dondurdu, oyuncu board'a tıklayacak
         bool oPlacementMode{false};
+
+        // Sonraki parça ok animasyonu için zaman fazı
+        float arrowPhase{0.f};
+
+        // 1000 puan jeton bildirimi
+        float tokenMilestoneNotifTimer{0.f};
     };
 } // namespace tetris

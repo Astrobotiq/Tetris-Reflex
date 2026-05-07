@@ -368,7 +368,7 @@ namespace tetris {
         // En dolu N satırı temizle (I gücü için)
         void clearBestRow(int count) {
             // En fazla dolu hücreye sahip satırları bul
-            std::vector<std::pair<int,int>> rowFill; // (dolu hücre sayısı, satır index)
+            std::vector<std::pair<int, int> > rowFill; // (dolu hücre sayısı, satır index)
             for (int r = 0; r < BOARD_ROWS; ++r) {
                 int filled = 0;
                 for (int c = 0; c < BOARD_COLS; ++c)
@@ -385,7 +385,7 @@ namespace tetris {
             }
             std::sort(targetRows.begin(), targetRows.end());
 
-            for (int r : targetRows) {
+            for (int r: targetRows) {
                 gameState.applyClearRow(r);
             }
         }
@@ -614,6 +614,35 @@ namespace tetris {
             float jy = iy + 140;
             txt(renderWindow, "JETON", {px + 8, jy}, 12, {220, 200, 80});
             txt(renderWindow, std::to_string(gameState.slotMachine.tokens), {px + 8, jy + 16}, 18, {255, 220, 50});
+
+            // Level geçiş dondurması geri sayımı
+            if (gameState.levelTransitionActive) {
+                float ly = jy + 52.f;
+                int secsLeft = static_cast<int>(std::ceil(gameState.levelTransitionTimer));
+
+                // Yanıp sönen arka plan kutusu
+                float pulse = 0.5f + 0.5f * std::sin(gameState.levelTransitionTimer * 8.f);
+                sf::RectangleShape box(sf::Vector2f{pw - 8.f, 52.f});
+                box.setPosition(sf::Vector2f{px + 4.f, ly - 2.f});
+                box.setFillColor(sf::Color(
+                    static_cast<std::uint8_t>(40 + 60 * pulse),
+                    static_cast<std::uint8_t>(20),
+                    static_cast<std::uint8_t>(60 + 80 * pulse), 200));
+                box.setOutlineColor(sf::Color(
+                    static_cast<std::uint8_t>(180 + 75 * pulse),
+                    static_cast<std::uint8_t>(100),
+                    static_cast<std::uint8_t>(255), 220));
+                box.setOutlineThickness(1.5f);
+                renderWindow.draw(box);
+
+                txt(renderWindow, "BEKLEME", {px + 8, ly + 2.f}, 10, {200, 160, 255});
+                txt(renderWindow, std::to_string(secsLeft) + "sn",
+                    {px + 8, ly + 18.f}, 18,
+                    sf::Color(
+                        static_cast<std::uint8_t>(200 + 55 * pulse),
+                        static_cast<std::uint8_t>(180),
+                        static_cast<std::uint8_t>(255)));
+            }
         }
 
         void drawMiniPiece(sf::RenderWindow &renderWindow, const Piece &piece,

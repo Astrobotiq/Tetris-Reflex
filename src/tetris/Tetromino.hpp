@@ -15,7 +15,6 @@
 #include <cstdint>
 #include <string>
 #include <random>
-#include <cstdint>
 
 namespace tetris {
     // 7 klasik tetromino tipi
@@ -137,12 +136,17 @@ namespace tetris {
         int rotation{0}; // 0-3
         int col{0}; // Board sütun ofseti
         int row{0}; // Board satır ofseti
+        bool hasToken{false}; // Bu parça jeton taşıyor mu?
 
         const TetrominoData &data() const {
             return TETROMINO_DEFS[static_cast<int>(type)];
         }
 
-        sf::Color color() const { return data().color; }
+        sf::Color color() const {
+            // Eğer jetonluysa belirgin bir altın sarısı dön, değilse normal rengini dön
+            if (hasToken) return sf::Color(255, 220, 50);
+            return data().color;
+        }
 
         // Bu dönüşümdeki dolu hücreleri (satır, sütun) çiftleri olarak döndür.
         // Board koordinatlarında: (row + dr, col + dc)

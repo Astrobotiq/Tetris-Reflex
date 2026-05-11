@@ -1,235 +1,198 @@
 #pragma once
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AudioManager.hpp  —  Spatial sound, music streaming, and volume groups
+// AudioManager.hpp  —  SFML 3 uyumlu ses yöneticisi
 //
-// SFML AUDIO CONCEPTS:
-//   sf::SoundBuffer — PCM data loaded into RAM (short sound effects).
-//   sf::Sound       — Plays a SoundBuffer; multiple Sounds can share one buffer.
-//   sf::Music       — Streams from disk (large files like background music).
-//
-// THIS MANAGER ADDS:
-//   • Voice pool: a fixed set of sf::Sound instances. When you play a sound,
-//     the manager finds a free (stopped) voice and uses it. This avoids
-//     creating/destroying sf::Sound objects constantly.
-//   • Volume groups (buses): "sfx", "music", "ui" each have a master volume.
-//     Changing "sfx" volume scales all sound effects at once.
-//   • Spatial audio: play a sound at a world position; it fades with distance.
-//   • Music crossfade: smoothly fade between two music tracks.
-//
-// WHY A VOICE POOL?
-//   sf::Sound is not cheap to construct. Keeping a fixed pool of, say, 32
-//   sounds means we never allocate at runtime. If all voices are busy, we
-//   either steal the oldest or silently drop the new sound.
+// SFML 3 değişiklikleri:
+//   • sf::Sound default constructor kaldırıldı → voice pool std::list kullanır
+//   • sf::Music::setLoop() kaldırıldı → constructor'da dosya alınır
+//   • sf::Music constructor'ı dosya yolunu alır, openFromFile yok
 // ─────────────────────────────────────────────────────────────────────────────
 
-#include "AssetManager.hpp"
 #include <SFML/Audio.hpp>
 #include <algorithm>
-#include <array>
+#include <list>
 #include <string>
 #include <unordered_map>
+#include <memory>
+#include <iostream>
 #include <cmath>
+#include <cstdlib>
 
 namespace engine {
+    enum class AudioBus { Master, SFX, Music, UI };
 
-// Number of simultaneously playing sound effects.
-inline constexpr std::size_t VOICE_POOL_SIZE = 32;
+    class AudioManager {
+    public:
+        AudioManager() = default;
 
-// Volume group names (buses).
-enum class AudioBus { Master, SFX, Music, UI };
-
-class AudioManager {
-public:
-    explicit AudioManager(AssetManager& assets)
-        : m_assets(assets)
-    {
-        // Pre-create all voice slots. They start in Stopped state.
-        // std::array default-constructs all sf::Sound objects.
-    }
-
-    // ── Volume control ────────────────────────────────────────────────────────
-
-    // Volume in [0, 100].
-    void setVolume(AudioBus bus, float volume) {
-        m_busVolumes[static_cast<int>(bus)] = std::clamp(volume, 0.f, 100.f);
-    }
-
-    float getVolume(AudioBus bus) const {
-        return m_busVolumes[static_cast<int>(bus)];
-    }
-
-    // ── Sound effects ─────────────────────────────────────────────────────────
-
-    // Play a loaded sound effect (from AssetManager) on the SFX bus.
-    // Returns the voice index (for pitch/volume tweaks), or -1 if pool full.
-    int playSound(const std::string& id,
-                  float pitchVariance = 0.f, // ± variance for non-repetitive audio
-                  AudioBus bus = AudioBus::SFX)
-    {
-        sf::SoundBuffer* buf = nullptr;
-        try { buf = &m_assets.getSound(id); }
-        catch (...) { return -1; }
-
-        int idx = findFreeVoice();
-        if (idx < 0) idx = stealOldestVoice(); // Steal if pool full.
-        if (idx < 0) return -1;
-
-        m_voices[idx].setBuffer(*buf);
-        m_voices[idx].setVolume(effectiveVolume(bus));
-        m_voiceBus[idx] = bus;
-        m_voiceStartTime[idx] = m_clock.getElapsedTime().asSeconds();
-
-        if (pitchVariance > 0.f) {
-            // Small random pitch shift prevents repetitive sounds feeling robotic.
-            float pitch = 1.f + (static_cast<float>(std::rand()) / RAND_MAX * 2.f - 1.f)
-                              * pitchVariance;
-            m_voices[idx].setPitch(pitch);
-        } else {
-            m_voices[idx].setPitch(1.f);
+        // ── Ses yükleme ───────────────────────────────────────────────────────────
+        bool loadSound(const std::string &id, const std::string &path) {
+            sf::SoundBuffer buf;
+            if (!buf.loadFromFile(path)) {
+                std::cerr << "AudioManager: ses yuklenemedi -> " << path << '\n';
+                return false;
+            }
+            m_buffers.emplace(id, std::move(buf));
+            return true;
         }
 
-        m_voices[idx].play();
-        return idx;
-    }
-
-    // Spatial sound: attenuates based on distance from a listener position.
-    // listenerPos is typically the camera/player world position.
-    int playSoundAt(const std::string& id,
-                    sf::Vector2f soundPos,
-                    sf::Vector2f listenerPos,
-                    float maxDistance = 600.f,
-                    float pitchVariance = 0.f)
-    {
-        float dist = std::sqrt(
-            (soundPos.x - listenerPos.x) * (soundPos.x - listenerPos.x) +
-            (soundPos.y - listenerPos.y) * (soundPos.y - listenerPos.y)
-        );
-        if (dist >= maxDistance) return -1; // Too far — don't bother.
-
-        // Linear falloff: volume 100% at dist=0, 0% at dist=maxDistance.
-        float spatialVolume = 1.f - (dist / maxDistance);
-        int idx = playSound(id, pitchVariance);
-        if (idx >= 0) {
-            float current = m_voices[idx].getVolume();
-            m_voices[idx].setVolume(current * spatialVolume);
+        // ── Volüm kontrolü ────────────────────────────────────────────────────────
+        void setVolume(AudioBus bus, float volume) {
+            m_busVolumes[static_cast<int>(bus)] = std::clamp(volume, 0.f, 100.f);
         }
-        return idx;
-    }
 
-    // ── Music streaming ───────────────────────────────────────────────────────
+        float getVolume(AudioBus bus) const {
+            return m_busVolumes[static_cast<int>(bus)];
+        }
 
-    // Play background music (streamed from disk).
-    // crossfadeDuration > 0 fades out the previous track while fading in the new one.
-    void playMusic(const std::string& filepath,
-                   bool  loop           = true,
-                   float crossfadeSec   = 1.5f)
-    {
-        if (m_currentMusic && m_currentMusic->getStatus() == sf::Music::Playing) {
-            // Start a crossfade: hand the current track to the outgoing slot.
+        // ── Ses efekti çal ────────────────────────────────────────────────────────
+        // pitchVariance > 0: küçük rastgele pitch kayması (tekrarlı sesleri önler)
+        void playSound(const std::string &id,
+                       float pitchVariance = 0.f,
+                       AudioBus bus = AudioBus::SFX) {
+            auto it = m_buffers.find(id);
+            if (it == m_buffers.end()) return;
+
+            // Bitmiş sesleri temizle
+            m_voices.remove_if([](const sf::Sound &s) {
+                return s.getStatus() == sf::Sound::Status::Stopped;
+            });
+
+            // Max 32 eş zamanlı ses
+            if (m_voices.size() >= 32) {
+                m_voices.pop_front(); // En eskiyi sil
+            }
+
+            // SFML 3: sf::Sound buffer ile oluşturulmalı
+            m_voices.emplace_back(it->second);
+            sf::Sound &voice = m_voices.back();
+            voice.setVolume(effectiveVolume(bus));
+
+            if (pitchVariance > 0.f) {
+                float r = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+                float pitch = 1.f + (r * 2.f - 1.f) * pitchVariance;
+                voice.setPitch(pitch);
+            }
+
+            voice.play();
+        }
+
+        // ── Müzik streaming ───────────────────────────────────────────────────────
+        // SFML 3: sf::Music constructor dosya yolunu alır, setLoop() yok
+        void playMusic(const std::string &filepath,
+                       bool loop = true,
+                       float crossfadeSec = 1.5f) {
+            if (m_currentMusic &&
+                m_currentMusic->getStatus() == sf::Music::Status::Playing) {
+                m_outgoingMusic = std::move(m_currentMusic);
+                m_crossfadeTimer = 0.f;
+                m_crossfadeDuration = crossfadeSec;
+            }
+
+            // SFML 3: constructor ile aç, hata olursa exception fırlatır
+            try {
+                m_currentMusic = std::make_unique<sf::Music>(filepath);
+            } catch (...) {
+                std::cerr << "AudioManager: muzik yuklenemedi -> " << filepath << '\n';
+                m_currentMusic.reset();
+                return;
+            }
+
+            // SFML 3'te setLoop() yok — loop için setLoopPoints kullanılır
+            // Tüm dosyayı döngüye almak için: baştan sona setLoopPoints
+            if (loop) {
+                // getDuration() müziğin uzunluğunu verir; 0'dan sonuna kadar döngü
+                // Not: play() çağrısından önce duration bilinmez, bu yüzden
+                // alternatif olarak update()'te bitip bitmediğini kontrol ederiz.
+                m_loopMusic = loop;
+            }
+
+            m_currentMusicPath = filepath;
+            m_currentMusic->setVolume(crossfadeSec > 0.f
+                                          ? 0.f
+                                          : effectiveVolume(AudioBus::Music));
+            m_currentMusic->play();
+        }
+
+        void stopMusic(float fadeDuration = 1.f) {
+            if (!m_currentMusic) return;
             m_outgoingMusic = std::move(m_currentMusic);
-            m_crossfadeTimer    = 0.f;
-            m_crossfadeDuration = crossfadeSec;
+            m_crossfadeTimer = 0.f;
+            m_crossfadeDuration = fadeDuration;
         }
 
-        // sf::Music must be opened, not loaded entirely into RAM.
-        // unique_ptr: AudioManager owns this music instance.
-        m_currentMusic = std::make_unique<sf::Music>();
-        if (!m_currentMusic->openFromFile(filepath)) {
-            m_currentMusic.reset();
-            return;
+        void pauseMusic() { if (m_currentMusic) m_currentMusic->pause(); }
+
+        void resumeMusic() {
+            if (m_currentMusic)
+                m_currentMusic->play();
+            else if (!m_currentMusicPath.empty())
+                playMusic(m_currentMusicPath, m_loopMusic, 0.f);
         }
-        m_currentMusic->setLoop(loop);
-        m_currentMusic->setVolume(crossfadeSec > 0.f ? 0.f : effectiveVolume(AudioBus::Music));
-        m_currentMusic->play();
-    }
 
-    void stopMusic(float fadeDuration = 1.f) {
-        if (!m_currentMusic) return;
-        m_outgoingMusic     = std::move(m_currentMusic);
-        m_crossfadeTimer    = 0.f;
-        m_crossfadeDuration = fadeDuration;
-        // m_currentMusic is now null, so no fade-in.
-    }
+        bool isMusicPlaying() const {
+            return m_currentMusic &&
+                   m_currentMusic->getStatus() == sf::Music::Status::Playing;
+        }
 
-    void pauseMusic() { if (m_currentMusic) m_currentMusic->pause(); }
-    void resumeMusic() { if (m_currentMusic) m_currentMusic->play(); }
+        // ── Her frame çağrılmalı ──────────────────────────────────────────────────
+        void update(float dt) {
+            // Crossfade güncelle
+            if (m_crossfadeDuration > 0.f) {
+                m_crossfadeTimer += dt;
+                float t = std::min(m_crossfadeTimer / m_crossfadeDuration, 1.f);
 
-    // ── Update (call once per frame) ──────────────────────────────────────────
-    // Handles crossfade, bus volume changes applied to live voices, etc.
-    void update(float dt) {
-        // Crossfade update.
-        if (m_crossfadeDuration > 0.f) {
-            m_crossfadeTimer += dt;
-            float t = std::min(m_crossfadeTimer / m_crossfadeDuration, 1.f);
+                if (m_outgoingMusic) {
+                    m_outgoingMusic->setVolume(effectiveVolume(AudioBus::Music) * (1.f - t));
+                    if (t >= 1.f) {
+                        m_outgoingMusic->stop();
+                        m_outgoingMusic.reset();
+                        m_crossfadeDuration = 0.f;
+                    }
+                }
+                if (m_currentMusic)
+                    m_currentMusic->setVolume(effectiveVolume(AudioBus::Music) * t);
+            } else if (m_currentMusic) {
+                m_currentMusic->setVolume(effectiveVolume(AudioBus::Music));
 
-            if (m_outgoingMusic) {
-                m_outgoingMusic->setVolume(effectiveVolume(AudioBus::Music) * (1.f - t));
-                if (t >= 1.f) {
-                    m_outgoingMusic->stop();
-                    m_outgoingMusic.reset();
-                    m_crossfadeDuration = 0.f;
+                // SFML 3'te setLoop() olmadığı için manuel loop
+                if (m_loopMusic &&
+                    m_currentMusic->getStatus() == sf::Music::Status::Stopped) {
+                    m_currentMusic->play();
                 }
             }
-            if (m_currentMusic) {
-                m_currentMusic->setVolume(effectiveVolume(AudioBus::Music) * t);
-            }
-        } else if (m_currentMusic) {
-            m_currentMusic->setVolume(effectiveVolume(AudioBus::Music));
         }
-    }
 
-    // Stop all voices immediately.
-    void stopAll() {
-        for (auto& v : m_voices) v.stop();
-        if (m_currentMusic)  m_currentMusic->stop();
-        if (m_outgoingMusic) m_outgoingMusic->stop();
-    }
-
-private:
-    float effectiveVolume(AudioBus bus) const {
-        float master = m_busVolumes[static_cast<int>(AudioBus::Master)];
-        float local  = m_busVolumes[static_cast<int>(bus)];
-        return master * local / 100.f; // Both in [0,100], combined → [0,100].
-    }
-
-    int findFreeVoice() const {
-        for (int i = 0; i < static_cast<int>(VOICE_POOL_SIZE); ++i) {
-            if (m_voices[i].getStatus() == sf::Sound::Stopped) return i;
+        void stopAll() {
+            m_voices.clear();
+            if (m_currentMusic) m_currentMusic->stop();
+            if (m_outgoingMusic) m_outgoingMusic->stop();
         }
-        return -1;
-    }
 
-    // Steal the voice that has been playing longest (least likely to be heard).
-    int stealOldestVoice() const {
-        int oldest = 0;
-        float oldestTime = m_voiceStartTime[0];
-        for (int i = 1; i < static_cast<int>(VOICE_POOL_SIZE); ++i) {
-            if (m_voiceStartTime[i] < oldestTime) {
-                oldestTime = m_voiceStartTime[i];
-                oldest = i;
-            }
+    private:
+        float effectiveVolume(AudioBus bus) const {
+            float master = m_busVolumes[static_cast<int>(AudioBus::Master)];
+            float local = m_busVolumes[static_cast<int>(bus)];
+            return master * local / 100.f;
         }
-        return oldest;
-    }
 
-    AssetManager& m_assets;
+        // Buffer map: id → PCM verisi
+        std::unordered_map<std::string, sf::SoundBuffer> m_buffers;
 
-    // Voice pool: fixed array, zero runtime allocation.
-    std::array<sf::Sound, VOICE_POOL_SIZE>   m_voices;
-    std::array<AudioBus,  VOICE_POOL_SIZE>   m_voiceBus        {};
-    std::array<float,     VOICE_POOL_SIZE>   m_voiceStartTime  {};
+        // Voice pool: liste, her eleman bir sf::Sound örneği
+        // SFML 3'te sf::Sound default constructor yok — listeye emplace_back ile eklenir
+        std::list<sf::Sound> m_voices;
 
-    // Bus volumes: indexed by AudioBus enum cast to int.
-    std::array<float, 4> m_busVolumes { 100.f, 100.f, 100.f, 100.f };
+        // Bus volümleri (Master, SFX, Music, UI)
+        std::array<float, 4> m_busVolumes{100.f, 100.f, 100.f, 100.f};
 
-    // Music — unique_ptr because sf::Music is non-copyable and large.
-    std::unique_ptr<sf::Music> m_currentMusic;
-    std::unique_ptr<sf::Music> m_outgoingMusic;
-    float m_crossfadeTimer    { 0.f };
-    float m_crossfadeDuration { 0.f };
-
-    sf::Clock m_clock; // Used to track voice start times for stealing.
-};
-
+        // Müzik
+        std::unique_ptr<sf::Music> m_currentMusic;
+        std::unique_ptr<sf::Music> m_outgoingMusic;
+        std::string m_currentMusicPath;
+        bool m_loopMusic{false};
+        float m_crossfadeTimer{0.f};
+        float m_crossfadeDuration{0.f};
+    };
 } // namespace engine

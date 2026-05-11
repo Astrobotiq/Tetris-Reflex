@@ -1,74 +1,74 @@
 # 🎮 Tetris — SimpleEngine2D
 
-Klasik Tetris'in üzerine inşa edilmiş, slot machine ve güç sistemi içeren C++17 / SFML 3 oyunu.
+A C++17 / SFML 3 Tetris game built on top of a custom 2D engine, featuring a slot machine power system, drag-and-drop piece placement, and particle effects.
 
 ---
 
-## Özellikler
+## Features
 
-- **Klasik Tetris mekaniği** — 7 tetromino, ghost piece, hard drop, satır temizleme
-- **Slot Machine sistemi** — Jeton biriktir, slot çevir, kombo yap, güç kazan
-- **Güç sistemi** — 15 farklı güç (satır temizleme, zaman durdurma, blok patlatma vb.)
-- **Selection Bar** — Sürükle & bırak ile tahtaya parça yerleştir
-- **Parçacık efektleri** — Satır temizleme ve yerleştirme animasyonları
-- **Ses sistemi** — Efektler ve arka plan müziği (SFML Audio)
-- **Level sistemi** — Her 10 satırda level atla, hız artar; level geçişinde 15 saniyelik bekleme
+- **Classic Tetris mechanics** — 7 tetrominoes, ghost piece, hard drop, line clearing
+- **Slot Machine system** — Earn tokens, spin the slots, hit combos, unlock powers
+- **Power system** — 15 unique powers (line clear, time stop, block explosion, and more)
+- **Selection Bar** — Drag & drop pieces onto the board at any time
+- **Particle effects** — Animations for line clears and piece placements
+- **Audio system** — Sound effects and background music (SFML Audio)
+- **Level system** — Speed increases every 10 lines; level transitions include a 15-second grace period
 
 ---
 
-## Gereksinimler
+## Requirements
 
-| Araç | Sürüm |
-|------|-------|
+| Tool | Version |
+|------|---------|
 | CMake | ≥ 3.17 |
-| C++ Derleyici | C++17 destekli (MSVC 2019+, GCC 10+, Clang 12+) |
+| C++ Compiler | C++17 support (MSVC 2019+, GCC 10+, Clang 12+) |
 | SFML | 3.x |
-| vcpkg | Herhangi bir güncel sürüm |
+| vcpkg | Any recent version |
 
 ---
 
 ## Build — Windows (vcpkg + MSVC)
 
-### 1. vcpkg kurulumu (daha önce yapmadıysan)
+### 1. Install vcpkg (if you haven't already)
 
 ```bash
 git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
 C:\vcpkg\bootstrap-vcpkg.bat
 ```
 
-### 2. SFML'i vcpkg ile yükle
+### 2. Install SFML via vcpkg
 
 ```bash
 C:\vcpkg\vcpkg.exe install sfml:x64-windows
 ```
 
-### 3. Projeyi klonla
+### 3. Clone the repository
 
 ```bash
-git clone https://github.com/kullanici-adin/SimpleEngine2D.git
+git clone https://github.com/your-username/SimpleEngine2D.git
 cd SimpleEngine2D
 ```
 
-### 4. Build et
+### 4. Build
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 cmake --build build --config Release
 ```
 
-### 5. Çalıştır
+### 5. Run
 
 ```bash
 build\Release\TetrisGame.exe
 ```
 
-> Assets klasörü build sonrası otomatik olarak `build/Release/assets/` altına kopyalanır.
+> The assets folder is automatically copied to `build/Release/assets/` after every build.
 
 ---
 
 ## Build — Linux / macOS
 
-### SFML kurulumu
+### Install SFML
 
 **Ubuntu / Debian:**
 ```bash
@@ -90,7 +90,7 @@ cmake --build build
 
 ---
 
-## Proje Yapısı
+## Project Structure
 
 ```
 SimpleEngine2D/
@@ -108,16 +108,16 @@ SimpleEngine2D/
 │       └── bgm.ogg
 ├── src/
 │   ├── tetris/
-│   │   ├── TetrisScene.hpp     — Ana oyun sahnesi
-│   │   ├── GameState.hpp       — Oyun durumu ve mantığı
-│   │   ├── Board.hpp           — Tahta grid sistemi
-│   │   ├── BoardRenderer.hpp   — Tahta çizimi
-│   │   ├── Tetromino.hpp       — Parça tanımları
-│   │   ├── SelectionBar.hpp    — Sürükle & bırak arayüzü
-│   │   ├── SlotMachine.hpp     — Jeton ve güç sistemi
-│   │   └── ParticleEffect.hpp  — Parçacık efektleri
-│   ├── AudioManager.hpp        — Ses yöneticisi
-│   ├── AssetManager.hpp        — Varlık yöneticisi
+│   │   ├── TetrisScene.hpp     — Main game scene
+│   │   ├── GameState.hpp       — Game logic and state
+│   │   ├── Board.hpp           — Grid system
+│   │   ├── BoardRenderer.hpp   — Board rendering
+│   │   ├── Tetromino.hpp       — Piece definitions
+│   │   ├── SelectionBar.hpp    — Drag & drop UI
+│   │   ├── SlotMachine.hpp     — Token and power system
+│   │   └── ParticleEffect.hpp  — Particle effects
+│   ├── AudioManager.hpp        — Audio manager
+│   ├── AssetManager.hpp        — Asset manager
 │   ├── SceneManager.hpp
 │   ├── InputManager.hpp
 │   ├── Application.cpp
@@ -128,46 +128,48 @@ SimpleEngine2D/
 
 ---
 
-## Kontroller
+## Controls
 
-| Tuş / Eylem | İşlev |
-|-------------|-------|
-| **Sol tık** (Selection Bar) | Parçayı sürükle |
-| **Sağ tık** (Selection Bar) | Parçayı döndür |
-| **Sol tık** (Güç butonu) | Güç kullan |
-| **"CEVİR" butonu** | Slot machine çevir (1 jeton) |
+| Key / Action | Function |
+|-------------|----------|
+| `P` | Pause / Resume |
+| `R` | Restart (on game over screen) |
+| **Left click** (Selection Bar) | Drag a piece |
+| **Right click** (Selection Bar) | Rotate a piece |
+| **Left click** (Power button) | Use a power |
+| **"SPIN" button** | Spin the slot machine (costs 1 token) |
 
 ---
 
-## Oyun Mekaniği
+## Gameplay
 
-### Jeton Sistemi
-- Bazı düşen parçalar **altın rengi** ile işaretlenir — jeton taşır
-- O parça dahil bir satır temizlenirse **1 jeton** kazanılır
-- Her **1000 puanda** otomatik olarak **1 jeton** verilir
-- Jetonla **"CEVİR"** butonuna basılır (1 jeton / çevirme)
+### Token System
+- Some falling pieces are highlighted in **gold** — they carry a token
+- Clearing a line that contains a token piece awards **1 token**
+- Every **1000 points** automatically grants **1 token**
+- Tokens are spent on the **SPIN** button (1 token per spin)
 
 ### Slot Machine
-- 3 slot aynı anda döner
-- **2 aynı** → küçük güç
-- **3 aynı** → büyük güç
-- **S + Z** → özel kombinasyon
+- 3 slots spin simultaneously
+- **2 matching** → small power
+- **3 matching** → big power
+- **S + Z** → special combination
 
-### Güçler
+### Powers
 
-| Kombinasyon | Küçük Güç | Büyük Güç |
-|-------------|-----------|-----------|
-| I × 2/3 | 1 satır temizle | 2 satır temizle |
-| O × 2/3 | 4sn zaman durdur | 8sn zaman durdur |
-| T × 2/3 | 3 parçayı yenile | 3 parçayı yenile |
-| L × 2/3 | Sola döndür | 2× sola döndür |
-| J × 2/3 | Sağa döndür | 2× sağa döndür |
-| S × 2/3 | En yüksek sütun −1 | 2 sütun −1 |
-| Z × 2/3 | 1 blok patlat | 3 blok patlat |
-| S + Z | — | En yüksek sütun −2 |
+| Combination | Small Power | Big Power |
+|-------------|-------------|-----------|
+| I × 2/3 | Clear 1 row | Clear 2 rows |
+| O × 2/3 | Freeze time 4s | Freeze time 8s |
+| T × 2/3 | Refresh 3 piece | Refresh 3 pieces |
+| L × 2/3 | Rotate left | Rotate left ×2 |
+| J × 2/3 | Rotate right | Rotate right ×2 |
+| S × 2/3 | Highest column −1 | 2 columns −1 |
+| Z × 2/3 | Explode 1 block | Explode 3 blocks |
+| S + Z | — | Highest column −2 |
 
 ---
 
-## Lisans
+## License
 
-MIT License — dilediğin gibi kullanabilirsin.
+MIT License — free to use, modify, and distribute.

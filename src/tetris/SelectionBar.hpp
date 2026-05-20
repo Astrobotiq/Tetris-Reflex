@@ -204,7 +204,7 @@ private:
         window.draw(btn);
 
         if (!fontPtr) return;
-        std::string label = anim.spinning ? "..." : "CEVİR";
+        std::string label = anim.spinning ? "..." : "REROLL";
         sf::Text t(*fontPtr, label, 14);
         t.setFillColor(canSpin ? sf::Color::White : sf::Color(120,120,120));
         auto lb = t.getLocalBounds();
@@ -221,7 +221,7 @@ private:
         float btnY = originPos.y + (BAR_HEIGHT - 36.f) * 0.5f;
 
         // Jeton sayısı butonun altında
-        std::string tokenStr = "Jeton: " + std::to_string(gs.slotMachine.tokens);
+        std::string tokenStr = "TOKEN: " + std::to_string(gs.slotMachine.tokens);
         sf::Text t(*fontPtr, tokenStr, 12);
         t.setFillColor(sf::Color(220, 200, 80));
         t.setPosition(sf::Vector2f{btnX, btnY + 40.f});

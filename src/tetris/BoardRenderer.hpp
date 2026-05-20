@@ -90,6 +90,12 @@ namespace tetris {
             );
         }
 
+        void setColors(sf::Color bg, sf::Color grid, sf::Color border) {
+            m_background.setFillColor(bg);
+            m_gridColor = grid;
+            m_background.setOutlineColor(border);
+        }
+
     private:
         void drawGrid(sf::RenderWindow &window) {
             sf::RectangleShape line;

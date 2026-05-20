@@ -11,17 +11,12 @@
 #include <ctime>
 #include <memory>
 #include <string>
+#include "ColorPalette.hpp"
+#include "PauseMenu.hpp"
+#include "TetrisHUD.hpp"
+#include "TetrisConstants.hpp"
 
 namespace tetris {
-    inline constexpr unsigned WIN_W = 700;
-    inline constexpr unsigned WIN_H = 740;
-
-    inline constexpr float LEFT_PANEL_W = 140.f;
-    inline constexpr float BOARD_X = LEFT_PANEL_W + 10.f;
-    inline constexpr float BOARD_Y = 20.f;
-    inline constexpr float BOARD_PIXEL_W = BOARD_COLS * CELL_SIZE;
-    inline constexpr float BOARD_PIXEL_H = BOARD_ROWS * CELL_SIZE;
-    inline constexpr float BAR_Y = BOARD_Y + BOARD_PIXEL_H + 4.f;
 
     class TetrisScene : public engine::Scene {
     public:
@@ -47,8 +42,8 @@ namespace tetris {
             if (loaded) {
                 selectionBar.setFont(font);
                 fontLoaded = true;
+                hud.setFont(font);
             }
-            particles.reserve(512);
             powerSelectMode = false;
             selectedPowerIdx = -1;
 
@@ -75,7 +70,6 @@ namespace tetris {
             if (showPowerModal) {
                 audio.update(dt);
                 selectionBar.update(dt, gameState);
-                updateParticles(dt);
                 return;
             }
 
@@ -106,8 +100,9 @@ namespace tetris {
             audio.update(dt);
 
             updateFlash(dt);
-            updateParticles(dt);
             updateDragPreview();
+
+            particleSystem.update(dt);
 
             arrowPhase += dt / 1.2f;
             if (arrowPhase > 1.f) arrowPhase -= 1.f;
@@ -119,7 +114,18 @@ namespace tetris {
         void handleEvent(const sf::Event &event) {
             if (gameState.gameOver) return;
 
-            // YENİ: F1 tuşu ile Debug Menüsünü aç/kapat
+            if (gameState.paused) {
+                sf::Vector2f mouse = sf::Vector2f(sf::Mouse::getPosition(window));
+                if (event.is<sf::Event::MouseMoved>()) {
+                    pauseMenu.handleMouseMove(mouse);
+                } else if (const auto *e = event.getIf<sf::Event::MouseButtonPressed>()) {
+                    if (e->button == sf::Mouse::Button::Left) {
+                        pauseMenu.handleMouseClick(mouse);
+                    }
+                }
+                return;
+            }
+
             if (const auto *e = event.getIf<sf::Event::KeyPressed>()) {
                 if (e->code == sf::Keyboard::Key::F1) {
                     showDebugMenu = !showDebugMenu;
@@ -232,7 +238,7 @@ namespace tetris {
         }
 
         void render(sf::RenderWindow &renderWindow, float) override {
-            renderWindow.clear(sf::Color(10, 10, 20));
+            renderWindow.clear(PALETTES[activePalette].background);
 
             boardRenderer.setFlashRows(flashRows,
                                        flashDuration > 0 ? flashTimer / flashDuration : 0.f);
@@ -245,10 +251,11 @@ namespace tetris {
             if (gameState.fallingHasToken)
                 drawTokenGlow(renderWindow);
 
-            renderParticles(renderWindow);
+            particleSystem.draw(renderWindow);
+
             selectionBar.render(renderWindow, gameState);
-            renderLeftPanel(renderWindow);
-            renderSidePanel(renderWindow);
+            hud.renderLeftPanel(renderWindow, gameState, powerSelectMode, hoveredPowerIdx);
+            hud.renderSidePanel(renderWindow, gameState);
 
             if (powerSelectMode) {
                 sf::RectangleShape dim(sf::Vector2f{float(BOARD_PIXEL_W), float(BOARD_PIXEL_H)});
@@ -270,16 +277,15 @@ namespace tetris {
             }
 
             if (oPlacementMode)
-                renderOPlacementHint(renderWindow);
+                hud.renderOPlacementHint(renderWindow);
 
             if (slotResultTimer > 0.f)
-                renderSlotResult(renderWindow);
+                hud.renderSlotResult(renderWindow, lastSlotResult, slotResultTimer);
 
             if (tokenMilestoneNotifTimer > 0.f)
-                renderTokenMilestoneNotif(renderWindow);
+                hud.renderTokenMilestoneNotif(renderWindow, tokenMilestoneNotifTimer);
 
             renderWindow.setView(renderWindow.getDefaultView());
-            renderHUD(renderWindow);
 
             if (showPowerModal) {
                 renderPowerModal(renderWindow);
@@ -289,10 +295,12 @@ namespace tetris {
                 renderDebugMenu(renderWindow);
             }
 
-            if (gameState.paused) renderOverlay(renderWindow, "PAUSED", "P: Resume");
+            if (gameState.paused) {
+                pauseMenu.render(renderWindow, font, PALETTES[activePalette], sfxEnabled, musicEnabled, activePalette, WIN_W, WIN_H);
+            }
+
             if (showGameOver)
-                renderOverlay(renderWindow, "GAME OVER",
-                              "Score: " + std::to_string(gameState.score) + "   R: Restart");
+                hud.renderOverlay(renderWindow, "GAME OVER", "Score: " + std::to_string(gameState.score) + "   R: Restart");
         }
 
     private:
@@ -340,6 +348,26 @@ namespace tetris {
                 // Animasyon dönmeye başladığı an düşen parçayı havada dondur
                 gameState.freezeFalling(true);
             };
+
+            pauseMenu.updateLayout(WIN_W, WIN_H);
+
+            pauseMenu.onToggleSFX = [this]() {
+                sfxEnabled = !sfxEnabled;
+                audio.setVolume(engine::AudioBus::SFX, sfxEnabled ? 85.f : 0.f);
+            };
+            pauseMenu.onToggleMusic = [this]() {
+                musicEnabled = !musicEnabled;
+                audio.setVolume(engine::AudioBus::Music, musicEnabled ? 45.f : 0.f);
+            };
+            pauseMenu.onSelectPalette = [this](int idx) {
+                applyPalette(idx);
+            };
+            pauseMenu.onResume = [this]() {
+                gameState.paused = false;
+            };
+
+            // Başlangıç paletini uygula
+            applyPalette(0);
         }
 
         // ── Sonraki parçanın düşeceği sütun — akan ok göstergesi ─────────────────
@@ -392,89 +420,6 @@ namespace tetris {
             }
         }
 
-        // ── 1000 puan jeton milestone bildirimi ──────────────────────────────────
-        void renderTokenMilestoneNotif(sf::RenderWindow &renderWindow) {
-            if (!fontLoaded) return;
-            float t = tokenMilestoneNotifTimer / 2.0f;
-            float alpha = t < 0.2f ? (t / 0.2f) : (t > 0.8f ? ((1.f - t) / 0.2f) : 1.f);
-            std::uint8_t a = static_cast<std::uint8_t>(alpha * 230);
-
-            float bw = 210.f, bh = 44.f;
-            float bx = BOARD_X + (BOARD_PIXEL_W - bw) * 0.5f;
-            float by = BOARD_Y + 12.f;
-            sf::RectangleShape box({bw, bh});
-            box.setPosition({bx, by});
-            box.setFillColor(sf::Color(30, 20, 50, a));
-            box.setOutlineColor(sf::Color(220, 180, 60, a));
-            box.setOutlineThickness(2.f);
-            renderWindow.draw(box);
-
-            sf::Text t1(font, "+1 TOKEN", 15);
-            t1.setFillColor(sf::Color(255, 220, 50, a));
-            t1.setStyle(sf::Text::Bold);
-            auto b1 = t1.getLocalBounds();
-            t1.setPosition({bx + (bw - b1.size.x) * 0.5f, by + 4.f});
-            renderWindow.draw(t1);
-
-            sf::Text t2(font, "1000 point milestone!", 11);
-            t2.setFillColor(sf::Color(200, 170, 255, a));
-            auto b2 = t2.getLocalBounds();
-            t2.setPosition({bx + (bw - b2.size.x) * 0.5f, by + 24.f});
-            renderWindow.draw(t2);
-        }
-
-        // ── Sol panel: güçler listesi ─────────────────────────────────────────────
-        void renderLeftPanel(sf::RenderWindow &renderWindow) {
-            sf::RectangleShape panel(sf::Vector2f{LEFT_PANEL_W, BOARD_PIXEL_H});
-            panel.setPosition(sf::Vector2f{0.f, BOARD_Y});
-            panel.setFillColor(sf::Color(18, 18, 32));
-            panel.setOutlineColor(sf::Color(60, 60, 100));
-            panel.setOutlineThickness(1.5f);
-            renderWindow.draw(panel);
-
-            if (!fontLoaded) return;
-
-            txt(renderWindow, "POWERS", {6.f, BOARD_Y + 8.f}, 13, sf::Color(180, 180, 255));
-
-            auto &powers = gameState.slotMachine.powers;
-
-            if (powers.empty()) {
-                txt(renderWindow, "(empty)", {10.f, BOARD_Y + 30.f}, 11, sf::Color(80, 80, 100));
-            }
-
-            for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
-                float y = BOARD_Y + 28.f + i * 44.f;
-
-                sf::RectangleShape btn(sf::Vector2f{LEFT_PANEL_W - 8.f, 38.f});
-                btn.setPosition(sf::Vector2f{4.f, y});
-
-                bool hovered = powerSelectMode && hoveredPowerIdx == i;
-                sf::Color c = powers[i].color();
-                btn.setFillColor(sf::Color(c.r / 4, c.g / 4, c.b / 4, hovered ? 220 : 160));
-                btn.setOutlineColor(hovered ? c : sf::Color(c.r / 2, c.g / 2, c.b / 2, 160));
-                btn.setOutlineThickness(hovered ? 2.f : 1.f);
-                renderWindow.draw(btn);
-
-                txt(renderWindow, powers[i].name(), {8.f, y + 4.f}, 10, sf::Color(c.r, c.g, c.b, 220));
-                if (powerSelectMode)
-                    txt(renderWindow, "click!", {8.f, y + 20.f}, 9, sf::Color(200, 200, 100));
-            }
-
-            if (!powers.empty()) {
-                float btnY = BOARD_Y + BOARD_PIXEL_H - 36.f;
-                sf::RectangleShape toggleBtn(sf::Vector2f{LEFT_PANEL_W - 8.f, 30.f});
-                toggleBtn.setPosition(sf::Vector2f{4.f, btnY});
-                toggleBtn.setFillColor(powerSelectMode
-                                           ? sf::Color(80, 180, 80, 200)
-                                           : sf::Color(40, 80, 40, 160));
-                toggleBtn.setOutlineColor(sf::Color(100, 200, 100, 200));
-                toggleBtn.setOutlineThickness(1.5f);
-                renderWindow.draw(toggleBtn);
-                txt(renderWindow, powerSelectMode ? "CANCEL" : "USE POWER",
-                    {8.f, btnY + 7.f}, 11, sf::Color::White);
-            }
-        }
-
         void handlePowerClick(sf::Vector2f mouse) {
             auto &powers = gameState.slotMachine.powers;
             float toggleY = BOARD_Y + BOARD_PIXEL_H - 36.f;
@@ -502,20 +447,6 @@ namespace tetris {
             if (mouse.x < LEFT_PANEL_W && mouse.y >= toggleY && mouse.y < toggleY + 30.f) {
                 powerSelectMode = !powerSelectMode;
                 gameState.freezeFalling(powerSelectMode);
-            }
-        }
-
-        void addPowerBlastParticles(sf::Color c) {
-            for (int i = 0; i < 40; ++i) {
-                SimpleParticle p;
-                p.pos = {BOARD_X + BOARD_PIXEL_W * 0.5f, BOARD_Y + BOARD_PIXEL_H * 0.5f};
-                float a = static_cast<float>(rand() % 360) * 3.14159f / 180.f;
-                float s = 100.f + static_cast<float>(rand() % 250);
-                p.vel = {std::cos(a) * s, std::sin(a) * s};
-                p.color = c;
-                p.maxLife = p.life = 0.5f + static_cast<float>(rand() % 40) / 100.f;
-                p.size = 6.f + static_cast<float>(rand() % 6);
-                particles.push_back(p);
             }
         }
 
@@ -588,68 +519,6 @@ namespace tetris {
                 gameState.applyClearRow(r);
         }
 
-        void renderOPlacementHint(sf::RenderWindow &renderWindow) {
-            if (!fontLoaded) return;
-            sf::RectangleShape overlay(sf::Vector2f{float(BOARD_PIXEL_W), 40.f});
-            overlay.setPosition(sf::Vector2f{BOARD_X, BOARD_Y - 44.f});
-            overlay.setFillColor(sf::Color(60, 20, 100, 200));
-            overlay.setOutlineColor(sf::Color(180, 80, 255, 220));
-            overlay.setOutlineThickness(1.5f);
-            renderWindow.draw(overlay);
-
-            sf::Text hint(font, "Click the column where you want to drop the piece!", 12);
-            hint.setFillColor(sf::Color(220, 180, 255));
-            auto b = hint.getLocalBounds();
-            hint.setPosition(sf::Vector2f{
-                BOARD_X + (BOARD_PIXEL_W - b.size.x) * 0.5f,
-                BOARD_Y - 40.f
-            });
-            renderWindow.draw(hint);
-        }
-
-        void renderSlotResult(sf::RenderWindow &renderWindow) {
-            if (!lastSlotResult.hasCombo) return;
-            float alpha = std::min(slotResultTimer / 0.5f, 1.f);
-            if (slotResultTimer < 0.5f) alpha = slotResultTimer / 0.5f;
-
-            sf::RectangleShape banner(sf::Vector2f{300.f, 60.f});
-            banner.setPosition(sf::Vector2f{
-                BOARD_X + (BOARD_PIXEL_W - 300.f) * 0.5f,
-                BOARD_Y + BOARD_PIXEL_H * 0.3f
-            });
-            banner.setFillColor(sf::Color(20, 20, 40,
-                                          static_cast<std::uint8_t>(200 * alpha)));
-            banner.setOutlineColor(sf::Color(200, 200, 80,
-                                             static_cast<std::uint8_t>(255 * alpha)));
-            banner.setOutlineThickness(2.f);
-            renderWindow.draw(banner);
-
-            if (!fontLoaded) return;
-
-            std::string comboText = (lastSlotResult.comboCount >= 3) ? "3x COMBO!" : "2x COMBO!";
-            PowerSlot tempSlot;
-            tempSlot.type = lastSlotResult.power;
-
-            sf::Text t1(font, comboText, 20);
-            t1.setFillColor(sf::Color(255, 220, 50, static_cast<std::uint8_t>(255 * alpha)));
-            t1.setStyle(sf::Text::Bold);
-            auto b1 = t1.getLocalBounds();
-            t1.setPosition(sf::Vector2f{
-                banner.getPosition().x + (300.f - b1.size.x) * 0.5f,
-                banner.getPosition().y + 6.f
-            });
-            renderWindow.draw(t1);
-
-            sf::Text t2(font, tempSlot.name(), 13);
-            t2.setFillColor(sf::Color(200, 200, 255, static_cast<std::uint8_t>(220 * alpha)));
-            auto b2 = t2.getLocalBounds();
-            t2.setPosition(sf::Vector2f{
-                banner.getPosition().x + (300.f - b2.size.x) * 0.5f,
-                banner.getPosition().y + 34.f
-            });
-            renderWindow.draw(t2);
-        }
-
         void drawTokenGlow(sf::RenderWindow &renderWindow) {
             auto cells = gameState.fallingPiece.cells();
             for (auto [r, c]: cells) {
@@ -698,192 +567,26 @@ namespace tetris {
             }
         }
 
-        struct SimpleParticle {
-            sf::Vector2f pos, vel;
-            sf::Color color;
-            float life, maxLife, size;
-        };
+        void addPowerBlastParticles(sf::Color c) {
+            particleSystem.emitExplosion(sf::Vector2f{BOARD_X + BOARD_PIXEL_W * 0.5f, BOARD_Y + BOARD_PIXEL_H * 0.5f}, c, 60);
+        }
 
         void addLineClearParticles(const std::vector<int> &rows) {
-            for (int r: rows)
-                for (int c = 0; c < BOARD_COLS; ++c)
-                    for (int k = 0; k < 4; ++k) {
-                        SimpleParticle p;
-                        p.pos = {
-                            BOARD_X + c * CELL_SIZE + CELL_SIZE * 0.5f,
-                            BOARD_Y + r * CELL_SIZE + CELL_SIZE * 0.5f
-                        };
-                        float a = static_cast<float>(rand() % 360) * 3.14159f / 180.f;
-                        float s = 60.f + static_cast<float>(rand() % 120);
-                        p.vel = {std::cos(a) * s, std::sin(a) * s};
-                        p.color = sf::Color(
-                            static_cast<std::uint8_t>(200 + rand() % 55),
-                            static_cast<std::uint8_t>(200 + rand() % 55),
-                            static_cast<std::uint8_t>(100 + rand() % 155), 255);
-                        p.maxLife = p.life = 0.4f + static_cast<float>(rand() % 30) / 100.f;
-                        p.size = 3.f + static_cast<float>(rand() % 4);
-                        particles.push_back(p);
-                    }
+            for (int r: rows) {
+                for (int c = 0; c < BOARD_COLS; ++c) {
+                    sf::Vector2f pos = sf::Vector2f{
+                        BOARD_X + c * CELL_SIZE + CELL_SIZE * 0.5f,
+                        BOARD_Y + r * CELL_SIZE + CELL_SIZE * 0.5f
+                    };
+                    sf::Color randColor(200 + rand() % 55, 200 + rand() % 55, 100 + rand() % 155, 255);
+                    particleSystem.emitLineClear(pos, randColor, 5);
+                }
+            }
         }
 
         void addPlaceParticles(sf::Vector2f pos) {
-            for (int k = 0; k < 8; ++k) {
-                SimpleParticle p;
-                p.pos = pos;
-                float a = static_cast<float>(rand() % 360) * 3.14159f / 180.f;
-                float s = 40.f + static_cast<float>(rand() % 80);
-                p.vel = {std::cos(a) * s, std::sin(a) * s};
-                p.color = sf::Color(static_cast<std::uint8_t>(100 + rand() % 155), 200, 255, 220);
-                p.maxLife = p.life = 0.25f + static_cast<float>(rand() % 20) / 100.f;
-                p.size = 4.f;
-                particles.push_back(p);
-            }
-        }
-
-        void updateParticles(float dt) {
-            for (auto &p: particles) {
-                p.pos += p.vel * dt;
-                p.vel.y += 200.f * dt;
-                p.life -= dt;
-            }
-            particles.erase(
-                std::remove_if(particles.begin(), particles.end(),
-                               [](const SimpleParticle &p) { return p.life <= 0.f; }),
-                particles.end());
-        }
-
-        void renderParticles(sf::RenderWindow &renderWindow) {
-            sf::CircleShape circle;
-            for (const auto &p: particles) {
-                float t = p.life / p.maxLife;
-                sf::Color c = p.color;
-                c.a = static_cast<std::uint8_t>(t * 255);
-                circle.setRadius(p.size * t);
-                circle.setFillColor(c);
-                float r = circle.getRadius();
-                circle.setOrigin(sf::Vector2f{r, r});
-                circle.setPosition(p.pos);
-                renderWindow.draw(circle);
-            }
-        }
-
-        void renderSidePanel(sf::RenderWindow &renderWindow) {
-            float px = BOARD_X + BOARD_PIXEL_W + 10.f, py = BOARD_Y;
-            float pw = float(WIN_W) - px - 5.f;
-
-            sf::RectangleShape panel(sf::Vector2f{pw, BOARD_PIXEL_H});
-            panel.setPosition(sf::Vector2f{px, py});
-            panel.setFillColor(sf::Color(18, 18, 30));
-            panel.setOutlineColor(sf::Color(60, 60, 100));
-            panel.setOutlineThickness(1.5f);
-            renderWindow.draw(panel);
-
-            if (!fontLoaded) return;
-
-            txt(renderWindow, "NEXT", {px + 8, py + 8}, 13, {160, 160, 220});
-            for (int i = 0; i < 3; ++i)
-                drawMiniPiece(renderWindow, gameState.nextPieces[i],
-                              {px + 12, py + 28.f + i * 60}, 16);
-
-            float iy = py + 220;
-            txt(renderWindow, "SCORE", {px + 8, iy}, 12, {140, 140, 200});
-            txt(renderWindow, std::to_string(gameState.score), {px + 8, iy + 16}, 16, {255, 255, 100});
-            txt(renderWindow, "LEVEL", {px + 8, iy + 44}, 12, {140, 140, 200});
-            txt(renderWindow, std::to_string(gameState.level), {px + 8, iy + 60}, 16, {100, 255, 180});
-            txt(renderWindow, "LINES", {px + 8, iy + 88}, 12, {140, 140, 200});
-            txt(renderWindow, std::to_string(gameState.linesCleared), {px + 8, iy + 104}, 16, {180, 220, 255});
-
-            float jy = iy + 140;
-            txt(renderWindow, "TOKENS", {px + 8, jy}, 12, {220, 200, 80});
-            txt(renderWindow, std::to_string(gameState.slotMachine.tokens), {px + 8, jy + 16}, 18, {255, 220, 50});
-
-            if (gameState.levelTransitionActive) {
-                float ly = jy + 52.f;
-                int secsLeft = static_cast<int>(std::ceil(gameState.levelTransitionTimer));
-                float pulse = 0.5f + 0.5f * std::sin(gameState.levelTransitionTimer * 8.f);
-
-                sf::RectangleShape box(sf::Vector2f{pw - 8.f, 52.f});
-                box.setPosition(sf::Vector2f{px + 4.f, ly - 2.f});
-                box.setFillColor(sf::Color(
-                    static_cast<std::uint8_t>(40 + 60 * pulse),
-                    static_cast<std::uint8_t>(20),
-                    static_cast<std::uint8_t>(60 + 80 * pulse), 200));
-                box.setOutlineColor(sf::Color(
-                    static_cast<std::uint8_t>(180 + 75 * pulse),
-                    static_cast<std::uint8_t>(100),
-                    static_cast<std::uint8_t>(255), 220));
-                box.setOutlineThickness(1.5f);
-                renderWindow.draw(box);
-
-                txt(renderWindow, "COOLDOWN", {px + 8, ly + 2.f}, 10, {200, 160, 255});
-                txt(renderWindow, std::to_string(secsLeft) + "s",
-                    {px + 8, ly + 18.f}, 18,
-                    sf::Color(
-                        static_cast<std::uint8_t>(200 + 55 * pulse),
-                        static_cast<std::uint8_t>(180),
-                        static_cast<std::uint8_t>(255)));
-            }
-        }
-
-        void drawMiniPiece(sf::RenderWindow &renderWindow, const Piece &piece,
-                           sf::Vector2f origin, float cellSize) {
-            sf::RectangleShape cell(sf::Vector2f{cellSize - 2.f, cellSize - 2.f});
-            cell.setFillColor(piece.color());
-            sf::Color bright = piece.color();
-            bright.r = static_cast<std::uint8_t>(std::min(255, int(bright.r) + 60));
-            bright.g = static_cast<std::uint8_t>(std::min(255, int(bright.g) + 60));
-            bright.b = static_cast<std::uint8_t>(std::min(255, int(bright.b) + 60));
-            cell.setOutlineColor(bright);
-            cell.setOutlineThickness(-1.5f);
-
-            int minR = 4, maxR = -1, minC = 4, maxC = -1;
-            for (auto [r,c]: piece.localCells()) {
-                minR = std::min(minR, r);
-                maxR = std::max(maxR, r);
-                minC = std::min(minC, c);
-                maxC = std::max(maxC, c);
-            }
-            if (maxR < 0) return;
-
-            for (auto [r,c]: piece.localCells()) {
-                cell.setPosition(sf::Vector2f{
-                    origin.x + (c - minC) * cellSize + 1.f,
-                    origin.y + (r - minR) * cellSize + 1.f
-                });
-                renderWindow.draw(cell);
-            }
-        }
-
-        void txt(sf::RenderWindow &renderWindow, const std::string &s,
-                 sf::Vector2f pos, unsigned sz, sf::Color col) {
-            sf::Text t(font, s, sz);
-            t.setFillColor(col);
-            t.setPosition(pos);
-            renderWindow.draw(t);
-        }
-
-        void renderHUD(sf::RenderWindow & /*renderWindow*/) {
-        }
-
-        void renderOverlay(sf::RenderWindow &renderWindow,
-                           const std::string &title, const std::string &sub) {
-            sf::RectangleShape dim(sf::Vector2f{float(WIN_W), float(WIN_H)});
-            dim.setFillColor(sf::Color(0, 0, 0, 160));
-            renderWindow.draw(dim);
-            if (!fontLoaded) return;
-
-            sf::Text t(font, title, 38);
-            t.setFillColor(sf::Color(255, 220, 60));
-            t.setStyle(sf::Text::Bold);
-            auto b = t.getLocalBounds();
-            t.setPosition(sf::Vector2f{(WIN_W - b.size.x) * 0.5f, WIN_H * 0.35f});
-            renderWindow.draw(t);
-
-            sf::Text s(font, sub, 18);
-            s.setFillColor(sf::Color(200, 200, 255));
-            auto sb = s.getLocalBounds();
-            s.setPosition(sf::Vector2f{(WIN_W - sb.size.x) * 0.5f, WIN_H * 0.35f + 50.f});
-            renderWindow.draw(s);
+            sf::Color randColor(100 + rand() % 155, 200, 255, 220);
+            particleSystem.emitPlace(pos, randColor, 10);
         }
 
         void renderPowerModal(sf::RenderWindow &renderWindow) {
@@ -1025,10 +728,17 @@ namespace tetris {
             setupCallbacks();
             audio.resumeMusic();
             showGameOver = false;
-            particles.clear();
             flashRows.clear();
+            particleSystem.clear();
             flashTimer = flashDuration = 0.f;
             powerSelectMode = false;
+        }
+
+        void applyPalette(int index) {
+            activePalette = index;
+            const auto& p = PALETTES[index];
+            boardRenderer.setColors(p.boardBg, p.gridLines, p.panelBorder);
+            // Tetromino renkleri render sırasında getPieceColor ile çözülecek
         }
 
         // ── Member değişkenler ────────────────────────────────────────────────────
@@ -1044,9 +754,6 @@ namespace tetris {
         // Flash
         std::vector<int> flashRows;
         float flashTimer{0.f}, flashDuration{0.f};
-
-        // Parçacıklar
-        std::vector<SimpleParticle> particles;
 
         // Slot machine sonuç gösterimi
         SlotResult lastSlotResult;
@@ -1079,5 +786,15 @@ namespace tetris {
 
         // Debug Menü Bayrağı
         bool showDebugMenu{false};
+
+        ParticleEffect particleSystem;
+
+        // --- Yeni Sistemler ---
+        bool sfxEnabled{true};
+        bool musicEnabled{true};
+        int activePalette{0};
+        PauseMenu pauseMenu;
+
+        TetrisHUD hud;
     };
 } // namespace tetris

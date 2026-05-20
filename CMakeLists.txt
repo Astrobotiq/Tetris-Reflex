@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(SFML_DIR "C:/vcpkg/installed/x64-windows/share/sfml")
 
 find_package(SFML 3 COMPONENTS Graphics Audio REQUIRED)
 
@@ -42,6 +43,9 @@ add_executable(TetrisGame src/main_tetris.cpp
         src/tetris/SlotMachine.hpp
         src/AudioManager.hpp
         src/AssetManager.hpp
+	src/tetris/ColorPalette.hpp
+        src/tetris/PauseMenu.hpp
+        src/tetris/TetrisHUD.hpp
 )
 target_link_libraries(TetrisGame PRIVATE EngineLib)
 

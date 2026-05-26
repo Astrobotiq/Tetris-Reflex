@@ -1,11 +1,13 @@
-﻿#pragma once
+#pragma once
 
 #include "GameState.hpp"
-#include "TetrisConstants.hpp" // EKLENDİ
+#include "TetrisConstants.hpp"
+#include "ColorPalette.hpp"
 #include <SFML/Graphics.hpp>
 #include <string>
 #include <cmath>
-#include <cstdint> // EKLENDİ
+#include <cstdint>
+#include <algorithm>
 
 namespace tetris {
 
@@ -13,16 +15,57 @@ namespace tetris {
     public:
         void setFont(const sf::Font& f) { m_font = &f; }
 
-        void renderSidePanel(sf::RenderWindow& window, const GameState& gameState) {
+        void update(float dt) {
+            m_scoreScale.x += (1.f - m_scoreScale.x) * 12.f * dt;
+            m_scoreScale.y += (1.f - m_scoreScale.y) * 12.f * dt;
+            m_levelScale.x += (1.f - m_levelScale.x) * 12.f * dt;
+            m_levelScale.y += (1.f - m_levelScale.y) * 12.f * dt;
+            m_linesScale.x += (1.f - m_linesScale.x) * 12.f * dt;
+            m_linesScale.y += (1.f - m_linesScale.y) * 12.f * dt;
+            m_tokensScale.x += (1.f - m_tokensScale.x) * 12.f * dt;
+            m_tokensScale.y += (1.f - m_tokensScale.y) * 12.f * dt;
+        }
+
+        void renderSidePanel(sf::RenderWindow& window, const GameState& gameState, const ColorPalette& pal) {
             float px = BOARD_X + BOARD_PIXEL_W + 10.f, py = BOARD_Y;
             float pw = float(WIN_W) - px - 5.f;
 
+            // Trigger animations on value change
+            if (gameState.score != m_prevScore) {
+                if (m_prevScore != -1) m_scoreScale = {1.5f, 0.6f};
+                m_prevScore = gameState.score;
+            }
+            if (gameState.level != m_prevLevel) {
+                if (m_prevLevel != -1) m_levelScale = {1.5f, 0.6f};
+                m_prevLevel = gameState.level;
+            }
+            if (gameState.linesCleared != m_prevLines) {
+                if (m_prevLines != -1) m_linesScale = {1.5f, 0.6f};
+                m_prevLines = gameState.linesCleared;
+            }
+            if (gameState.slotMachine.tokens != m_prevTokens) {
+                if (m_prevTokens != -1) m_tokensScale = {1.5f, 0.6f};
+                m_prevTokens = gameState.slotMachine.tokens;
+            }
+
             sf::RectangleShape panel(sf::Vector2f{pw, BOARD_PIXEL_H});
             panel.setPosition(sf::Vector2f{px, py});
-            panel.setFillColor(sf::Color(18, 18, 30));
-            panel.setOutlineColor(sf::Color(60, 60, 100));
+            panel.setFillColor(pal.panelBg);
+            panel.setOutlineColor(pal.panelBorder);
             panel.setOutlineThickness(1.5f);
             window.draw(panel);
+
+            // Neon Border Glow
+            for (int i = 0; i < 3; ++i) {
+                sf::RectangleShape glow(sf::Vector2f(pw - i * 2.f, BOARD_PIXEL_H - i * 2.f));
+                glow.setPosition(sf::Vector2f(px + static_cast<float>(i), py + static_cast<float>(i)));
+                glow.setFillColor(sf::Color::Transparent);
+                sf::Color outlineCol = pal.uiAccent;
+                outlineCol.a = static_cast<std::uint8_t>(40 + i * 40);
+                glow.setOutlineColor(outlineCol);
+                glow.setOutlineThickness(1.f);
+                window.draw(glow);
+            }
 
             if (!m_font) return;
 
@@ -32,15 +75,34 @@ namespace tetris {
 
             float iy = py + 220;
             txt(window, "SCORE", sf::Vector2f{px + 8, iy}, 12, sf::Color(140, 140, 200));
-            txt(window, std::to_string(gameState.score), sf::Vector2f{px + 8, iy + 16}, 16, sf::Color(255, 255, 100));
+            txt(window, std::to_string(gameState.score), sf::Vector2f{px + 8, iy + 16}, 16, sf::Color(255, 255, 100), m_scoreScale);
+            
             txt(window, "LEVEL", sf::Vector2f{px + 8, iy + 44}, 12, sf::Color(140, 140, 200));
-            txt(window, std::to_string(gameState.level), sf::Vector2f{px + 8, iy + 60}, 16, sf::Color(100, 255, 180));
-            txt(window, "LINES", sf::Vector2f{px + 8, iy + 88}, 12, sf::Color(140, 140, 200));
-            txt(window, std::to_string(gameState.linesCleared), sf::Vector2f{px + 8, iy + 104}, 16, sf::Color(180, 220, 255));
+            txt(window, std::to_string(gameState.level), sf::Vector2f{px + 8, iy + 60}, 16, sf::Color(100, 255, 180), m_levelScale);
+            
+            // Level progress bar under Level
+            float barY = iy + 80.f;
+            float barW = pw - 20.f;
+            float barH = 5.f;
+            sf::RectangleShape barBg(sf::Vector2f{barW, barH});
+            barBg.setPosition(sf::Vector2f{px + 8.f, barY});
+            barBg.setFillColor(sf::Color(30, 30, 50));
+            window.draw(barBg);
 
-            float jy = iy + 140;
+            float progress = (gameState.linesCleared % 10) / 10.f;
+            if (progress > 0.f) {
+                sf::RectangleShape barFill(sf::Vector2f{barW * progress, barH});
+                barFill.setPosition(sf::Vector2f{px + 8.f, barY});
+                barFill.setFillColor(pal.uiAccent);
+                window.draw(barFill);
+            }
+
+            txt(window, "LINES", sf::Vector2f{px + 8, iy + 92}, 12, sf::Color(140, 140, 200));
+            txt(window, std::to_string(gameState.linesCleared), sf::Vector2f{px + 8, iy + 108}, 16, sf::Color(180, 220, 255), m_linesScale);
+
+            float jy = iy + 144;
             txt(window, "TOKENS", sf::Vector2f{px + 8, jy}, 12, sf::Color(220, 200, 80));
-            txt(window, std::to_string(gameState.slotMachine.tokens), sf::Vector2f{px + 8, jy + 16}, 18, sf::Color(255, 220, 50));
+            txt(window, std::to_string(gameState.slotMachine.tokens), sf::Vector2f{px + 8, jy + 16}, 18, sf::Color(255, 220, 50), m_tokensScale);
 
             if (gameState.levelTransitionActive) {
                 float ly = jy + 52.f;
@@ -63,13 +125,25 @@ namespace tetris {
             }
         }
 
-        void renderLeftPanel(sf::RenderWindow& window, const GameState& gameState, bool powerSelectMode, int hoveredPowerIdx) {
+        void renderLeftPanel(sf::RenderWindow& window, const GameState& gameState, const ColorPalette& pal, bool powerSelectMode, int hoveredPowerIdx) {
             sf::RectangleShape panel(sf::Vector2f{LEFT_PANEL_W, BOARD_PIXEL_H});
             panel.setPosition(sf::Vector2f{0.f, BOARD_Y});
-            panel.setFillColor(sf::Color(18, 18, 32));
-            panel.setOutlineColor(sf::Color(60, 60, 100));
+            panel.setFillColor(pal.panelBg);
+            panel.setOutlineColor(pal.panelBorder);
             panel.setOutlineThickness(1.5f);
             window.draw(panel);
+
+            // Neon Border Glow
+            for (int i = 0; i < 3; ++i) {
+                sf::RectangleShape glow(sf::Vector2f(LEFT_PANEL_W - i * 2.f, BOARD_PIXEL_H - i * 2.f));
+                glow.setPosition(sf::Vector2f(static_cast<float>(i), BOARD_Y + static_cast<float>(i)));
+                glow.setFillColor(sf::Color::Transparent);
+                sf::Color outlineCol = pal.uiAccent;
+                outlineCol.a = static_cast<std::uint8_t>(40 + i * 40);
+                glow.setOutlineColor(outlineCol);
+                glow.setOutlineThickness(1.f);
+                window.draw(glow);
+            }
 
             if (!m_font) return;
 
@@ -87,16 +161,66 @@ namespace tetris {
                 sf::RectangleShape btn(sf::Vector2f{LEFT_PANEL_W - 8.f, 38.f});
                 btn.setPosition(sf::Vector2f{4.f, y});
 
-                bool hovered = powerSelectMode && hoveredPowerIdx == i;
+                bool hovered = hoveredPowerIdx == i;
                 sf::Color c = powers[i].color();
                 btn.setFillColor(sf::Color(c.r / 4, c.g / 4, c.b / 4, hovered ? 220 : 160));
                 btn.setOutlineColor(hovered ? c : sf::Color(c.r / 2, c.g / 2, c.b / 2, 160));
                 btn.setOutlineThickness(hovered ? 2.f : 1.f);
                 window.draw(btn);
 
-                txt(window, powers[i].name(), sf::Vector2f{8.f, y + 4.f}, 10, sf::Color(c.r, c.g, c.b, 220));
+                // Draw hotkey tag circle/box on the left side of the button
+                sf::RectangleShape tag(sf::Vector2f{16.f, 16.f});
+                tag.setPosition(sf::Vector2f{8.f, y + 11.f});
+                tag.setFillColor(sf::Color(15, 15, 25));
+                tag.setOutlineColor(sf::Color(c.r, c.g, c.b, 160));
+                tag.setOutlineThickness(1.f);
+                window.draw(tag);
+
+                txt(window, std::to_string(i + 1), sf::Vector2f{13.f, y + 12.f}, 9, sf::Color(c.r, c.g, c.b, 220));
+
+                txt(window, powers[i].name(), sf::Vector2f{30.f, y + 4.f}, 10, sf::Color(c.r, c.g, c.b, 220));
                 if (powerSelectMode)
-                    txt(window, "click!", sf::Vector2f{8.f, y + 20.f}, 9, sf::Color(200, 200, 100));
+                    txt(window, "click or key!", sf::Vector2f{30.f, y + 20.f}, 9, sf::Color(200, 200, 100));
+                else
+                    txt(window, "Press [" + std::to_string(i + 1) + "]", sf::Vector2f{30.f, y + 20.f}, 9, sf::Color(140, 140, 140));
+            }
+
+            // Draw a beautiful tooltip card next to the left panel if a power is hovered
+            if (hoveredPowerIdx >= 0 && hoveredPowerIdx < static_cast<int>(powers.size())) {
+                float tx = LEFT_PANEL_W + 10.f;
+                float ty = BOARD_Y + 28.f + hoveredPowerIdx * 44.f;
+                float tw = 230.f;
+                float th = 64.f;
+
+                // Make sure tooltip stays within screen height
+                if (ty + th > BOARD_Y + BOARD_PIXEL_H) {
+                    ty = BOARD_Y + BOARD_PIXEL_H - th - 5.f;
+                }
+
+                sf::RectangleShape tooltip(sf::Vector2f{tw, th});
+                tooltip.setPosition(sf::Vector2f{tx, ty});
+                tooltip.setFillColor(sf::Color(20, 20, 30, 245));
+                
+                sf::Color c = powers[hoveredPowerIdx].color();
+                tooltip.setOutlineColor(c);
+                tooltip.setOutlineThickness(1.5f);
+                window.draw(tooltip);
+
+                // Tooltip Neon Outer Glow
+                for (int j = 0; j < 2; ++j) {
+                    sf::RectangleShape glow(sf::Vector2f{tw + j * 2.f, th + j * 2.f});
+                    glow.setPosition(sf::Vector2f{tx - j, ty - j});
+                    glow.setFillColor(sf::Color::Transparent);
+                    sf::Color gc = c;
+                    gc.a = static_cast<std::uint8_t>(40 + j * 30);
+                    glow.setOutlineColor(gc);
+                    glow.setOutlineThickness(1.f);
+                    window.draw(glow);
+                }
+
+                txt(window, powers[hoveredPowerIdx].name(), sf::Vector2f{tx + 8.f, ty + 6.f}, 11, c);
+                txt(window, powers[hoveredPowerIdx].description(), sf::Vector2f{tx + 8.f, ty + 24.f}, 9, sf::Color(200, 200, 220));
+                txt(window, "Press [" + std::to_string(hoveredPowerIdx + 1) + "] to use directly", sf::Vector2f{tx + 8.f, ty + 44.f}, 8, sf::Color(130, 130, 150));
             }
 
             if (!powers.empty()) {
@@ -175,10 +299,25 @@ namespace tetris {
 
     private:
         const sf::Font* m_font{nullptr};
+        int m_prevScore{-1};
+        int m_prevLevel{-1};
+        int m_prevLines{-1};
+        int m_prevTokens{-1};
 
-        void txt(sf::RenderWindow& window, const std::string& s, sf::Vector2f pos, unsigned sz, sf::Color col) {
+        sf::Vector2f m_scoreScale{1.f, 1.f};
+        sf::Vector2f m_levelScale{1.f, 1.f};
+        sf::Vector2f m_linesScale{1.f, 1.f};
+        sf::Vector2f m_tokensScale{1.f, 1.f};
+
+        void txt(sf::RenderWindow& window, const std::string& s, sf::Vector2f pos, unsigned sz, sf::Color col, sf::Vector2f scale = {1.f, 1.f}) {
             sf::Text t(*m_font, s, sz);
             t.setFillColor(col);
+            t.setScale(scale);
+            if (scale.x != 1.f || scale.y != 1.f) {
+                sf::FloatRect b = t.getLocalBounds();
+                t.setOrigin({0.f, b.size.y * 0.5f});
+                pos.y += sz * 0.5f * (scale.y - 1.f);
+            }
             t.setPosition(pos);
             window.draw(t);
         }

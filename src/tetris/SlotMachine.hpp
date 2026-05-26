@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SlotMachine.hpp  —  Jeton sistemi, reroll ve güç mekaniği
@@ -79,6 +79,26 @@ namespace tetris {
                 case PowerType::Z_Big: return "Zx3: Destroy 3 Blocks";
                 case PowerType::SZ_Special: return "S+Z: Column -2";
                 default: return "?";
+            }
+        }
+
+        std::string description() const {
+            switch (type) {
+                case PowerType::I_Small: return "Clears 1 row with the most blocks.";
+                case PowerType::I_Big: return "Clears 2 rows with the most blocks.";
+                case PowerType::O_Small: return "Stops gravity for 4 seconds.";
+                case PowerType::O_Big: return "Stops gravity for 8 seconds.";
+                case PowerType::T_Big: return "Rerolls slot pieces for free.";
+                case PowerType::L_Small: return "Rotates falling piece left once.";
+                case PowerType::L_Big: return "Rotates falling piece left twice.";
+                case PowerType::J_Small: return "Rotates falling piece right once.";
+                case PowerType::J_Big: return "Rotates falling piece right twice.";
+                case PowerType::S_Small: return "Lowers highest column by 1.";
+                case PowerType::S_Big: return "Lowers 2 highest columns by 1.";
+                case PowerType::Z_Small: return "Destroys 1 random block on board.";
+                case PowerType::Z_Big: return "Destroys 3 random blocks on board.";
+                case PowerType::SZ_Special: return "Lowers highest column by 2.";
+                default: return "";
             }
         }
 

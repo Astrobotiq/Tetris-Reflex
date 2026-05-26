@@ -102,9 +102,23 @@ namespace engine {
 		bool isEmpty() const { return m_stack.empty(); }
 		Scene* top() const { return m_stack.empty() ? nullptr : m_stack.back().get(); }
 
+	public:
+		enum class TransitionState { None, FadeOut, FadeIn };
+		enum class TransitionAction { Push, Pop, Replace };
+
+		TransitionState getTransitionState() const { return m_transState; }
+
 	private:
 		// vector of unique_ptrs: clear ownership semantics, easy stack operations.
 		std::vector<std::unique_ptr<Scene>> m_stack;
+
+		TransitionState  m_transState{TransitionState::None};
+		TransitionAction m_transAction{TransitionAction::Replace};
+		float            m_transTimer{0.f};
+		float            m_transDuration{0.3f};
+		std::unique_ptr<Scene> m_pendingScene{nullptr};
+
+		void performTransitionAction();
 	};
 
 } // namespace engine

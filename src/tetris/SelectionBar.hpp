@@ -136,6 +136,11 @@ public:
     bool isDragging()            const { return drag.active; }
     bool isSpinning()            const { return anim.spinning; }
     const DragState& dragState() const { return drag; }
+    sf::Vector2f slotCenter(int idx) const {
+        float slotW = width * 0.6f / SELECTION_SIZE;
+        return {originPos.x + slotW * (idx + 0.5f),
+                originPos.y + BAR_HEIGHT * 0.5f};
+    }
 
     // ── Render ───────────────────────────────────────────────────────────────
     void render(sf::RenderWindow& window, const GameState& gs) {
@@ -157,9 +162,6 @@ public:
                 float alpha = draggingThis ? 0.3f : 1.0f;
                 drawPiecePreview(window, gs.selectionPieces[i], i, alpha);
                 drawSlotBorder(window, i, false);
-
-                // Jeton işareti: bu parçayı koysan jeton kazanır mısın?
-                // (Düşen parçanın tokeni — selection'da göstermiyoruz burada)
             }
         }
 
@@ -235,12 +237,6 @@ private:
         window.draw(t);
     }
 
-    // ── Slot ve parça çizimi ──────────────────────────────────────────────────
-    sf::Vector2f slotCenter(int idx) const {
-        float slotW = width * 0.6f / SELECTION_SIZE;
-        return {originPos.x + slotW * (idx + 0.5f),
-                originPos.y + BAR_HEIGHT * 0.5f};
-    }
 
     int hitTest(sf::Vector2f pos) const {
         if (pos.y < originPos.y || pos.y > originPos.y + BAR_HEIGHT) return -1;

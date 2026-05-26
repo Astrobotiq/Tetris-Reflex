@@ -65,6 +65,7 @@ namespace tetris {
         std::function<void(int, std::vector<int>)> onLinesCleared;
         std::function<void()> onPieceLocked;
         std::function<void()> onGameOver;
+        std::function<void(int col, int row, sf::Color color)> onCellCleared;
         // Slot machine sonucu döndüğünde: güç kazanıldıysa bildir
         std::function<void(SlotResult)> onSlotResult;
         std::function<void(FreeSlotResult)> onFreeSlotResult;
@@ -208,6 +209,9 @@ namespace tetris {
                 for (int step = 0; step < amount; ++step) {
                     for (int r = 0; r < BOARD_ROWS; ++r) {
                         if (!board.isEmpty(col, r)) {
+                            if (onCellCleared) {
+                                onCellCleared(col, r, board.getCell(col, r));
+                            }
                             board.setCell(col, r, EMPTY_COLOR);
                             break;
                         }
@@ -225,8 +229,14 @@ namespace tetris {
 
             std::shuffle(filled.begin(), filled.end(), rng);
             int cleared = std::min(count, static_cast<int>(filled.size()));
-            for (int i = 0; i < cleared; ++i)
-                board.setCell(filled[i].first, filled[i].second, EMPTY_COLOR);
+            for (int i = 0; i < cleared; ++i) {
+                int col = filled[i].first;
+                int row = filled[i].second;
+                if (onCellCleared) {
+                    onCellCleared(col, row, board.getCell(col, row));
+                }
+                board.setCell(col, row, EMPTY_COLOR);
+            }
         }
 
         void applyClearRow(int row) {

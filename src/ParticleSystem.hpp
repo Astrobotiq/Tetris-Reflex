@@ -152,10 +152,9 @@ public:
     }
 
     void render(sf::RenderWindow& window) {
-        // Build a VertexArray of Points — one vertex per particle.
-        // For quad-based particles (with size), use sf::Quads and emit 4 verts.
+        // Build a VertexArray of Triangles — 6 vertices per particle (2 triangles for a quad).
         m_vertices.clear();
-        m_vertices.setPrimitiveType(sf::Quads);
+        m_vertices.setPrimitiveType(sf::PrimitiveType::Triangles);
 
         for (const auto& p : m_pool) {
             if (!p.alive) continue;
@@ -164,22 +163,30 @@ public:
             float inv = 1.f - t;
 
             // Lerp colour between birth and death values.
-            // We interpolate each channel manually; sf::Color has no lerp built in.
             sf::Color c(
-                static_cast<sf::Uint8>(p.colorStart.r * inv + p.colorEnd.r * t),
-                static_cast<sf::Uint8>(p.colorStart.g * inv + p.colorEnd.g * t),
-                static_cast<sf::Uint8>(p.colorStart.b * inv + p.colorEnd.b * t),
-                static_cast<sf::Uint8>(p.colorStart.a * inv + p.colorEnd.a * t)
+                static_cast<std::uint8_t>(p.colorStart.r * inv + p.colorEnd.r * t),
+                static_cast<std::uint8_t>(p.colorStart.g * inv + p.colorEnd.g * t),
+                static_cast<std::uint8_t>(p.colorStart.b * inv + p.colorEnd.b * t),
+                static_cast<std::uint8_t>(p.colorStart.a * inv + p.colorEnd.a * t)
             );
 
             float half = (p.sizeStart * inv + p.sizeEnd * t) * 0.5f;
             sf::Vector2f pos = p.position;
 
-            // Emit a billboard quad (always faces the camera in 2D = screen-aligned).
-            m_vertices.append({ {pos.x - half, pos.y - half}, c });
-            m_vertices.append({ {pos.x + half, pos.y - half}, c });
-            m_vertices.append({ {pos.x + half, pos.y + half}, c });
-            m_vertices.append({ {pos.x - half, pos.y + half}, c });
+            sf::Vector2f topLeft{pos.x - half, pos.y - half};
+            sf::Vector2f topRight{pos.x + half, pos.y - half};
+            sf::Vector2f bottomRight{pos.x + half, pos.y + half};
+            sf::Vector2f bottomLeft{pos.x - half, pos.y + half};
+
+            // Triangle 1: Top-Left, Top-Right, Bottom-Right
+            m_vertices.append(sf::Vertex{topLeft, c});
+            m_vertices.append(sf::Vertex{topRight, c});
+            m_vertices.append(sf::Vertex{bottomRight, c});
+
+            // Triangle 2: Top-Left, Bottom-Right, Bottom-Left
+            m_vertices.append(sf::Vertex{topLeft, c});
+            m_vertices.append(sf::Vertex{bottomRight, c});
+            m_vertices.append(sf::Vertex{bottomLeft, c});
         }
 
         window.draw(m_vertices);

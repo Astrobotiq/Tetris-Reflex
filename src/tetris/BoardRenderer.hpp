@@ -26,6 +26,12 @@ namespace tetris {
             m_background.setFillColor(sf::Color(15, 15, 28));
             m_background.setOutlineColor(sf::Color(80, 80, 120));
             m_background.setOutlineThickness(2.f);
+
+            for (int r = 0; r < BOARD_ROWS; ++r) {
+                for (int c = 0; c < BOARD_COLS; ++c) {
+                    m_cellScales[r][c] = 1.f;
+                }
+            }
         }
 
         // Sürüklenen parçanın önizlemesini ayarla (null = gösterme)
@@ -72,6 +78,70 @@ namespace tetris {
                     window.draw(row);
                 }
             }
+
+            // Render active board effects (glowing light spreads)
+            for (const auto& fx : m_effects) {
+                float progress = fx.timer / fx.duration;
+                float alpha = (1.f - progress) * 200.f;
+                sf::Color c = fx.color;
+                c.a = static_cast<std::uint8_t>(alpha);
+
+                if (fx.type == BoardEffect::Type::LineClear) {
+                    float maxDist = BOARD_ROWS * CELL_SIZE * 0.5f;
+                    float dist = progress * maxDist;
+
+                    sf::RectangleShape beam({float(BOARD_COLS * CELL_SIZE), 8.f});
+                    beam.setOrigin({0.f, 4.f});
+                    beam.setFillColor(c);
+
+                    float yUp = fx.centerY - dist;
+                    if (yUp >= m_origin.y) {
+                        beam.setPosition({m_origin.x, yUp});
+                        window.draw(beam);
+                    }
+                    float yDown = fx.centerY + dist;
+                    if (yDown <= m_origin.y + BOARD_ROWS * CELL_SIZE) {
+                        beam.setPosition({m_origin.x, yDown});
+                        window.draw(beam);
+                    }
+                } else if (fx.type == BoardEffect::Type::Placement) {
+                    float maxRadius = CELL_SIZE * 4.f;
+                    float radius = progress * maxRadius;
+
+                    sf::CircleShape ring(radius);
+                    ring.setOrigin({radius, radius});
+                    ring.setPosition(fx.center);
+                    ring.setFillColor(sf::Color::Transparent);
+                    ring.setOutlineColor(c);
+                    ring.setOutlineThickness(4.f);
+                    window.draw(ring);
+                }
+            }
+
+            // Draw flashing cells about to be destroyed
+            for (const auto& fc : m_flashingCells) {
+                float progress = fc.timer / fc.duration;
+                // High contrast flash: alternate white and original color
+                float flashCycle = std::sin(progress * 40.f) * 0.5f + 0.5f;
+                std::uint8_t r = static_cast<std::uint8_t>(fc.color.r + (255 - fc.color.r) * flashCycle);
+                std::uint8_t g = static_cast<std::uint8_t>(fc.color.g + (255 - fc.color.g) * flashCycle);
+                std::uint8_t b = static_cast<std::uint8_t>(fc.color.b + (255 - fc.color.b) * flashCycle);
+                sf::Color drawColor(r, g, b, static_cast<std::uint8_t>((1.f - progress) * 255));
+                
+                sf::RectangleShape cell({CELL_SIZE - 2.f, CELL_SIZE - 2.f});
+                cell.setOrigin({(CELL_SIZE - 2.f) * 0.5f, (CELL_SIZE - 2.f) * 0.5f});
+                cell.setPosition({
+                    m_origin.x + fc.col * CELL_SIZE + CELL_SIZE * 0.5f,
+                    m_origin.y + fc.row * CELL_SIZE + CELL_SIZE * 0.5f
+                });
+                
+                float scale = 1.2f * (1.f - progress);
+                cell.setScale({scale, scale});
+                cell.setFillColor(drawColor);
+                cell.setOutlineColor(sf::Color::White);
+                cell.setOutlineThickness(-1.f);
+                window.draw(cell);
+            }
         }
 
         int screenXToCol(float screenX) const {
@@ -96,6 +166,68 @@ namespace tetris {
             m_background.setOutlineColor(border);
         }
 
+        void update(float dt) {
+            for (int r = 0; r < BOARD_ROWS; ++r) {
+                for (int c = 0; c < BOARD_COLS; ++c) {
+                    m_cellScales[r][c] += (1.f - m_cellScales[r][c]) * 15.f * dt;
+                }
+            }
+            for (auto it = m_effects.begin(); it != m_effects.end(); ) {
+                it->timer += dt;
+                if (it->timer >= it->duration) {
+                    it = m_effects.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (auto it = m_flashingCells.begin(); it != m_flashingCells.end(); ) {
+                it->timer += dt;
+                if (it->timer >= it->duration) {
+                    it = m_flashingCells.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        void triggerLineClearScalePop(const Board& board) {
+            for (int r = 0; r < BOARD_ROWS; ++r) {
+                for (int c = 0; c < BOARD_COLS; ++c) {
+                    if (!board.isEmpty(c, r)) {
+                        m_cellScales[r][c] = 1.35f;
+                    }
+                }
+            }
+        }
+
+        void triggerPlacementScalePop(const std::vector<std::pair<int, int>>& cells, const Board& board) {
+            for (auto pos : cells) {
+                for (int dr = -2; dr <= 2; ++dr) {
+                    for (int dc = -2; dc <= 2; ++dc) {
+                        int r = pos.first + dr;
+                        int c = pos.second + dc;
+                        if (r >= 0 && r < BOARD_ROWS && c >= 0 && c < BOARD_COLS) {
+                            if (!board.isEmpty(c, r)) {
+                                m_cellScales[r][c] = 1.25f;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        void triggerLineClearEffect(float centerY, sf::Color color) {
+            m_effects.push_back({BoardEffect::Type::LineClear, 0.f, 0.45f, centerY, {0.f, 0.f}, color});
+        }
+
+        void triggerPlacementEffect(sf::Vector2f center, sf::Color color) {
+            m_effects.push_back({BoardEffect::Type::Placement, 0.f, 0.35f, 0.f, center, color});
+        }
+
+        void triggerCellFlash(int col, int row, sf::Color color) {
+            m_flashingCells.push_back({col, row, color, 0.f, 0.35f});
+        }
+
     private:
         void drawGrid(sf::RenderWindow &window) {
             sf::RectangleShape line;
@@ -117,16 +249,19 @@ namespace tetris {
 
         void drawBoard(sf::RenderWindow &window, const Board &board) {
             sf::RectangleShape cell({CELL_SIZE - 2.f, CELL_SIZE - 2.f});
+            cell.setOrigin({(CELL_SIZE - 2.f) * 0.5f, (CELL_SIZE - 2.f) * 0.5f});
             for (int r = 0; r < BOARD_ROWS; ++r) {
                 for (int c = 0; c < BOARD_COLS; ++c) {
                     auto color = board.getCell(c, r);
                     if (color == EMPTY_COLOR) continue;
+
+                    float scale = m_cellScales[r][c];
                     cell.setPosition({
-                        m_origin.x + c * CELL_SIZE + 1.f,
-                        m_origin.y + r * CELL_SIZE + 1.f
+                        m_origin.x + c * CELL_SIZE + CELL_SIZE * 0.5f,
+                        m_origin.y + r * CELL_SIZE + CELL_SIZE * 0.5f
                     });
+                    cell.setScale({scale, scale});
                     cell.setFillColor(color);
-                    // İç parlama efekti
                     cell.setOutlineColor(lighten(color, 60));
                     cell.setOutlineThickness(-1.5f);
                     window.draw(cell);
@@ -175,5 +310,27 @@ namespace tetris {
 
         std::vector<int> m_flashRows;
         float m_flashAlpha{0.f};
+
+        float m_cellScales[BOARD_ROWS][BOARD_COLS];
+
+        struct BoardEffect {
+            enum class Type { LineClear, Placement };
+            Type type;
+            float timer{0.f};
+            float duration{0.4f};
+            float centerY{0.f};
+            sf::Vector2f center;
+            sf::Color color;
+        };
+        std::vector<BoardEffect> m_effects;
+
+        struct FlashingCell {
+            int col;
+            int row;
+            sf::Color color;
+            float timer{0.f};
+            float duration{0.35f};
+        };
+        std::vector<FlashingCell> m_flashingCells;
     };
 } // namespace tetris
